@@ -2,10 +2,15 @@ package com.cresensolutions.leaveservice.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "leave_types")
@@ -31,6 +36,9 @@ public class LeaveType {
 
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    @OneToMany(mappedBy = "leaveTypeReference", fetch = FetchType.LAZY)
+    private Set<LeaveRecord> leaveRecords = new LinkedHashSet<>();
 
     protected LeaveType() {
     }
@@ -74,5 +82,17 @@ public class LeaveType {
             return leaveUniqueName;
         }
         return leaveName == null ? "" : leaveName;
+    }
+
+    public Set<LeaveRecord> getLeaveRecords() {
+        return Collections.unmodifiableSet(leaveRecords);
+    }
+
+    void addLeaveRecord(LeaveRecord leaveRecord) {
+        leaveRecords.add(leaveRecord);
+    }
+
+    void removeLeaveRecord(LeaveRecord leaveRecord) {
+        leaveRecords.remove(leaveRecord);
     }
 }

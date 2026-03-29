@@ -161,15 +161,25 @@ public class LeaveRecord {
     }
 
     public void assignUser(UserProfile user) {
+        if (this.user != null && this.user != user) {
+            this.user.removeLeaveRecord(this);
+        }
+
         this.user = user;
         if (user != null) {
+            user.addLeaveRecord(this);
             this.emailId = user.getEmailId();
         }
     }
 
     public void assignLeaveType(LeaveType leaveTypeReference) {
+        if (this.leaveTypeReference != null && this.leaveTypeReference != leaveTypeReference) {
+            this.leaveTypeReference.removeLeaveRecord(this);
+        }
+
         this.leaveTypeReference = leaveTypeReference;
         if (leaveTypeReference != null) {
+            leaveTypeReference.addLeaveRecord(this);
             this.leaveType = leaveTypeReference.getDisplayName();
         }
     }

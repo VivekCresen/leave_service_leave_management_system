@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.stream.Stream;
 
 @Service
 @Transactional(readOnly = true)
@@ -64,24 +65,26 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Override
     public LeaveResponse getLeaveById(Long leaveId) {
-        return leaveRepository.findById(leaveId)
+        return leaveRepository.findDetailedById(leaveId)
                 .map(this::toLeaveResponse)
                 .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
     }
 
     @Override
     public List<LeaveResponse> getAllLeaves() {
-        return leaveRepository.findAllByOrderByFromDateDescIdDesc().stream()
-                .map(this::toLeaveResponse)
-                .toList();
+        try (Stream<LeaveRecord> leaves = leaveRepository.streamAllByOrderByFromDateDescIdDesc()) {
+            return leaves.map(this::toLeaveResponse)
+                    .toList();
+        }
     }
 
     @Override
     public List<LeaveResponse> getLeavesByUserId(Long userId) {
         ensureUserExists(userId);
-        return leaveRepository.findAllByUserIdOrderByFromDateDescIdDesc(userId).stream()
-                .map(this::toLeaveResponse)
-                .toList();
+        try (Stream<LeaveRecord> leaves = leaveRepository.streamAllByUserIdOrderByFromDateDescIdDesc(userId)) {
+            return leaves.map(this::toLeaveResponse)
+                    .toList();
+        }
     }
 
     @Override

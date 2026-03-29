@@ -2,10 +2,16 @@ package com.cresensolutions.leaveservice.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 @Entity
 @Table(name = "user_profile")
@@ -55,6 +61,12 @@ public class UserProfile {
 
     @Column(name = "last_login")
     private Instant lastLogin;
+
+    @OneToMany(mappedBy = "user", fetch = FetchType.LAZY)
+    private Set<LeaveRecord> leaveRecords = new LinkedHashSet<>();
+
+    @OneToOne(mappedBy = "user", fetch = FetchType.LAZY)
+    private EmployeeLeave employeeLeave;
 
     public UserProfile() {
     }
@@ -117,5 +129,21 @@ public class UserProfile {
 
     public Instant getLastLogin() {
         return lastLogin;
+    }
+
+    public Set<LeaveRecord> getLeaveRecords() {
+        return Collections.unmodifiableSet(leaveRecords);
+    }
+
+    public EmployeeLeave getEmployeeLeave() {
+        return employeeLeave;
+    }
+
+    void addLeaveRecord(LeaveRecord leaveRecord) {
+        leaveRecords.add(leaveRecord);
+    }
+
+    void removeLeaveRecord(LeaveRecord leaveRecord) {
+        leaveRecords.remove(leaveRecord);
     }
 }

@@ -1,7 +1,9 @@
 package com.cresensolutions.leaveservice.service;
 
 import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
+import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
+import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
 import com.cresensolutions.leaveservice.model.LeaveRecord;
 import com.cresensolutions.leaveservice.model.LeaveType;
 import com.cresensolutions.leaveservice.model.UserProfile;
@@ -18,7 +20,9 @@ import java.time.LocalDate;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -65,5 +69,75 @@ class LeaveServiceTest {
         assertEquals(3, response.leaveTypeId());
         assertEquals("CASUAL", response.leaveType());
         assertEquals("vivek@cresen.com", response.emailId());
+    }
+
+    @Test
+    void shouldCreateLeaveTypeForAdminConfiguredCatalog() {
+        when(leaveTypeRepository.existsByLeaveNameIgnoreCase("Work From Home")).thenReturn(false);
+        when(leaveTypeRepository.existsByLeaveUniqueNameIgnoreCase("WORK_FROM_HOME")).thenReturn(false);
+        when(leaveTypeRepository.save(any(LeaveType.class))).thenAnswer(invocation -> {
+            LeaveType leaveType = invocation.getArgument(0);
+            leaveType.updateDetails("Work From Home", "WORK_FROM_HOME", "Remote working days.", 24);
+            return leaveType;
+        });
+
+        LeaveTypeResponse response = leaveService.createLeaveType(new CreateLeaveTypeRequest(
+                "Work From Home",
+                "work from home",
+                "Remote working days.",
+                24
+        ));
+
+        assertEquals("Work From Home", response.leaveName());
+        assertEquals("WORK_FROM_HOME", response.leaveUniqueName());
+        assertEquals(24, response.maxDays());
+    }
+
+    @Test
+    void shouldRejectDuplicateLeaveTypeUniqueName() {
+        when(leaveTypeRepository.existsByLeaveNameIgnoreCase("Sick Leave")).thenReturn(false);
+        when(leaveTypeRepository.existsByLeaveUniqueNameIgnoreCase("SICK_LEAVE")).thenReturn(true);
+
+        assertThrows(IllegalArgumentException.class, () -> leaveService.createLeaveType(new CreateLeaveTypeRequest(
+                "Sick Leave",
+                "sick leave",
+                "Medical leave",
+                12
+        )));
+    }
+
+    @Test
+    void shouldUpdateLeaveTypeUsingPopupWorkflow() {
+        LeaveType leaveType = new LeaveType(5, "Casual Leave", "CASUAL_LEAVE");
+        leaveType.updateDetails("Casual Leave", "CASUAL_LEAVE", "Short notice leave.", 7);
+
+        when(leaveTypeRepository.findById(5)).thenReturn(Optional.of(leaveType));
+        when(leaveTypeRepository.existsByLeaveNameIgnoreCaseAndIdNot("Privilege Leave", 5)).thenReturn(false);
+        when(leaveTypeRepository.existsByLeaveUniqueNameIgnoreCaseAndIdNot("PRIVILEGE_LEAVE", 5)).thenReturn(false);
+        when(leaveTypeRepository.save(any(LeaveType.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.updateLeaveType(5, new CreateLeaveTypeRequest(
+                "Privilege Leave",
+                "privilege leave",
+                "Annual earned leave.",
+                18
+        ));
+
+        assertEquals(5, response.id());
+        assertEquals("Privilege Leave", response.leaveName());
+        assertEquals("PRIVILEGE_LEAVE", response.leaveUniqueName());
+        assertEquals(18, response.maxDays());
+    }
+
+    @Test
+    void shouldDeleteLeaveType() {
+        LeaveType leaveType = new LeaveType(8, "Optional Leave", "OPTIONAL_LEAVE");
+
+        when(leaveTypeRepository.findById(8)).thenReturn(Optional.of(leaveType));
+
+        leaveService.deleteLeaveType(8);
+
+        verify(leaveRepository).saveAll(any());
+        verify(leaveTypeRepository).delete(leaveType);
     }
 }

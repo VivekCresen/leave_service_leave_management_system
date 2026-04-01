@@ -1,6 +1,7 @@
 package com.cresensolutions.leaveservice.service;
 
 import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
+import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
 import com.cresensolutions.leaveservice.exception.ResourceNotFoundException;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 @Service
@@ -90,14 +92,72 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     public List<LeaveTypeResponse> getLeaveTypes() {
         return leaveTypeRepository.findAllByOrderByIdAsc().stream()
-                .map(type -> new LeaveTypeResponse(
-                        type.getId(),
-                        type.getLeaveName(),
-                        type.getLeaveUniqueName(),
-                        type.getDescription(),
-                        type.getMaxDays()
-                ))
+                .map(this::toLeaveTypeResponse)
                 .toList();
+    }
+
+    @Override
+    @Transactional
+    public LeaveTypeResponse createLeaveType(CreateLeaveTypeRequest request) {
+        String leaveName = normalizeRequiredValue(request.leaveName(), "Leave name is required");
+        String leaveUniqueName = normalizeUniqueName(request.leaveUniqueName());
+        String description = normalizeOptionalValue(request.description());
+        Integer maxDays = request.maxDays();
+
+        if (maxDays == null) {
+            throw new IllegalArgumentException("Max days is required.");
+        }
+
+        if (leaveTypeRepository.existsByLeaveNameIgnoreCase(leaveName)) {
+            throw new IllegalArgumentException("Leave name already exists: " + leaveName);
+        }
+
+        if (leaveTypeRepository.existsByLeaveUniqueNameIgnoreCase(leaveUniqueName)) {
+            throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName);
+        }
+
+        LeaveType leaveType = new LeaveType(leaveName, leaveUniqueName, description, maxDays);
+        return toLeaveTypeResponse(leaveTypeRepository.save(leaveType));
+    }
+
+    @Override
+    @Transactional
+    public LeaveTypeResponse updateLeaveType(Integer leaveTypeId, CreateLeaveTypeRequest request) {
+        LeaveType leaveType = leaveTypeRepository.findById(leaveTypeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Leave type not found with id: " + leaveTypeId));
+
+        String leaveName = normalizeRequiredValue(request.leaveName(), "Leave name is required");
+        String leaveUniqueName = normalizeUniqueName(request.leaveUniqueName());
+        String description = normalizeOptionalValue(request.description());
+        Integer maxDays = request.maxDays();
+
+        if (maxDays == null) {
+            throw new IllegalArgumentException("Max days is required.");
+        }
+
+        if (leaveTypeRepository.existsByLeaveNameIgnoreCaseAndIdNot(leaveName, leaveTypeId)) {
+            throw new IllegalArgumentException("Leave name already exists: " + leaveName);
+        }
+
+        if (leaveTypeRepository.existsByLeaveUniqueNameIgnoreCaseAndIdNot(leaveUniqueName, leaveTypeId)) {
+            throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName);
+        }
+
+        leaveType.updateDetails(leaveName, leaveUniqueName, description, maxDays);
+        return toLeaveTypeResponse(leaveTypeRepository.save(leaveType));
+    }
+
+    @Override
+    @Transactional
+    public void deleteLeaveType(Integer leaveTypeId) {
+        LeaveType leaveType = leaveTypeRepository.findById(leaveTypeId)
+                .orElseThrow(() -> new ResourceNotFoundException("Leave type not found with id: " + leaveTypeId));
+
+        Set<LeaveRecord> linkedLeaves = Set.copyOf(leaveType.getLeaveRecords());
+        linkedLeaves.forEach(leave -> leave.assignLeaveType(null));
+        leaveRepository.saveAll(linkedLeaves);
+
+        leaveTypeRepository.delete(leaveType);
     }
 
     private void ensureUserExists(Long userId) {
@@ -110,6 +170,40 @@ public class LeaveServiceImpl implements LeaveService {
         if (request.toDate().isBefore(request.fromDate())) {
             throw new IllegalArgumentException("To date must be on or after from date.");
         }
+    }
+
+    private String normalizeRequiredValue(String value, String message) {
+        String normalized = normalizeOptionalValue(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException(message);
+        }
+        return normalized;
+    }
+
+    private String normalizeUniqueName(String value) {
+        String normalized = normalizeRequiredValue(value, "Leave unique name is required");
+        return normalized.replace(' ', '_').toUpperCase();
+    }
+
+    private String normalizeOptionalValue(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String normalized = value.trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private LeaveTypeResponse toLeaveTypeResponse(LeaveType type) {
+        return new LeaveTypeResponse(
+                type.getId(),
+                type.getLeaveName(),
+                type.getLeaveUniqueName(),
+                type.getDescription(),
+                type.getMaxDays(),
+                type.getCreatedAt(),
+                type.getUpdatedAt()
+        );
     }
 
     private LeaveResponse toLeaveResponse(LeaveRecord leave) {

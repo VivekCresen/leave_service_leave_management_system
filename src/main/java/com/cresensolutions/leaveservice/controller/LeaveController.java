@@ -57,6 +57,24 @@ public class LeaveController {
         return leaveService.getLeavesByUserId(userId, page, size);
     }
 
+    @GetMapping("/by-username/{username}")
+    public Page<LeaveResponse> getLeavesByUsername(
+            @PathVariable String username,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "200") int size
+    ) {
+        return leaveService.getLeavesByUsername(username, page, size);
+    }
+
+    @GetMapping("/by-manager/{managerUsername}")
+    public Page<LeaveResponse> getLeavesByManagerUsername(
+            @PathVariable String managerUsername,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "200") int size
+    ) {
+        return leaveService.getLeavesByManagerUsername(managerUsername, page, size);
+    }
+
     @PutMapping("/{leaveId}/status")
     public LeaveResponse updateLeaveStatus(
             @PathVariable Long leaveId,

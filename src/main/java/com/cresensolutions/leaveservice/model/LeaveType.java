@@ -43,6 +43,9 @@ public class LeaveType {
     @Column(name = "max_days")
     private Integer maxDays;
 
+    @Column(name = "gender_restriction")
+    private String genderRestriction; // null = no restriction, "MALE", "FEMALE"
+
     @Column(name = "created_at")
     private Instant createdAt;
 
@@ -66,6 +69,14 @@ public class LeaveType {
         this.leaveUniqueName = leaveUniqueName;
         this.description = description;
         this.maxDays = maxDays;
+    }
+
+    public LeaveType(String leaveName, String leaveUniqueName, String description, Integer maxDays, String genderRestriction) {
+        this.leaveName = leaveName;
+        this.leaveUniqueName = leaveUniqueName;
+        this.description = description;
+        this.maxDays = maxDays;
+        this.genderRestriction = genderRestriction;
     }
 
     @PrePersist
@@ -102,6 +113,10 @@ public class LeaveType {
         return maxDays;
     }
 
+    public String getGenderRestriction() {
+        return genderRestriction;
+    }
+
     public Instant getCreatedAt() {
         return createdAt;
     }
@@ -121,11 +136,12 @@ public class LeaveType {
         return Collections.unmodifiableSet(leaveRecords);
     }
 
-    public void updateDetails(String leaveName, String leaveUniqueName, String description, Integer maxDays) {
+    public void updateDetails(String leaveName, String leaveUniqueName, String description, Integer maxDays, String genderRestriction) {
         this.leaveName = leaveName;
         this.leaveUniqueName = leaveUniqueName;
         this.description = description;
         this.maxDays = maxDays;
+        this.genderRestriction = genderRestriction;
     }
 
     void addLeaveRecord(LeaveRecord leaveRecord) {

@@ -4,8 +4,10 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
 import com.cresensolutions.leaveservice.service.LeaveService;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -33,8 +36,11 @@ public class LeaveController {
     }
 
     @GetMapping
-    public List<LeaveResponse> getAllLeaves() {
-        return leaveService.getAllLeaves();
+    public Page<LeaveResponse> getAllLeaves(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
+    ) {
+        return leaveService.getAllLeaves(page, size);
     }
 
     @GetMapping("/{leaveId}")
@@ -43,8 +49,20 @@ public class LeaveController {
     }
 
     @GetMapping("/user/{userId}")
-    public List<LeaveResponse> getLeavesByUserId(@PathVariable Long userId) {
-        return leaveService.getLeavesByUserId(userId);
+    public Page<LeaveResponse> getLeavesByUserId(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
+    ) {
+        return leaveService.getLeavesByUserId(userId, page, size);
+    }
+
+    @PutMapping("/{leaveId}/status")
+    public LeaveResponse updateLeaveStatus(
+            @PathVariable Long leaveId,
+            @Valid @RequestBody UpdateLeaveStatusRequest request
+    ) {
+        return leaveService.updateLeaveStatus(leaveId, request);
     }
 
     @GetMapping("/types")

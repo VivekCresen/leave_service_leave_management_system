@@ -7,6 +7,7 @@ import jakarta.persistence.ForeignKey;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
@@ -18,7 +19,14 @@ import org.hibernate.type.SqlTypes;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "\"leave\"")
+@Table(
+        name = "\"leave\"",
+        indexes = {
+                @Index(name = "idx_leave_user_from_date", columnList = "user_id, from_date"),
+                @Index(name = "idx_leave_type_reference", columnList = "leave_type_id"),
+                @Index(name = "idx_leave_from_date", columnList = "from_date")
+        }
+)
 public class LeaveRecord {
 
     @Id
@@ -55,6 +63,15 @@ public class LeaveRecord {
 
     @Column(name = "editable")
     private boolean editable = true;
+
+    @Column(name = "status")
+    private String status = "PENDING";
+
+    @Column(name = "approved_by")
+    private String approvedBy;
+
+    @Column(name = "rejection_reason")
+    private String rejectionReason;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", foreignKey = @ForeignKey(name = "fk_leave_user"))
@@ -150,6 +167,24 @@ public class LeaveRecord {
 
     public boolean isEditable() {
         return editable;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public String getApprovedBy() {
+        return approvedBy;
+    }
+
+    public String getRejectionReason() {
+        return rejectionReason;
+    }
+
+    public void updateStatus(String status, String actorUsername, String rejectionReason) {
+        this.status = status;
+        this.approvedBy = actorUsername;
+        this.rejectionReason = rejectionReason;
     }
 
     public UserProfile getUser() {

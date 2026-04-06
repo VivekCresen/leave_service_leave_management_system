@@ -6,8 +6,10 @@ import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 public record CreateLeaveRequest(
-        @NotNull(message = "User id is required")
+        // Either userId or username must be provided
         Long userId,
+
+        String username,
 
         @NotNull(message = "Leave type id is required")
         Integer leaveTypeId,

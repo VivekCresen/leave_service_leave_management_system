@@ -3,10 +3,19 @@ spring:
     name: leave-service
   config:
     import: optional:configserver:http://localhost:8888
+
   datasource:
     url: jdbc:postgresql://localhost:5432/leave_management_system
     username: postgres
     password: postgres
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+      pool-name: LeaveHikariPool
+
   jpa:
     hibernate:
       ddl-auto: update
@@ -17,6 +26,10 @@ spring:
         default_batch_fetch_size: 50
         jdbc:
           fetch_size: 50
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
 
 server:
   port: 8082

@@ -68,4 +68,8 @@ public class EmployeeLeave {
     public String getGender() {
         return gender;
     }
+
+    public void setLeaves(String leaves) {
+        this.leaves = leaves;
+    }
 }

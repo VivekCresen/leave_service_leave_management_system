@@ -8,6 +8,7 @@ public record LeaveTypeResponse(
         String leaveUniqueName,
         String description,
         Integer maxDays,
+        String genderRestriction,
         Instant createdAt,
         Instant updatedAt
 ) {

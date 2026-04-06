@@ -19,6 +19,10 @@ public interface LeaveService {
 
     Page<LeaveResponse> getLeavesByUserId(Long userId, int page, int size);
 
+    Page<LeaveResponse> getLeavesByUsername(String username, int page, int size);
+
+    Page<LeaveResponse> getLeavesByManagerUsername(String managerUsername, int page, int size);
+
     LeaveResponse updateLeaveStatus(Long leaveId, UpdateLeaveStatusRequest request);
 
     List<LeaveTypeResponse> getLeaveTypes();

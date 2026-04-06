@@ -10,7 +10,13 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 50
+        jdbc:
+          fetch_size: 50
 
 server:
   port: 8082

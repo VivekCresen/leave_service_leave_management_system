@@ -4,6 +4,8 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
+import org.springframework.data.domain.Page;
 
 import java.util.List;
 
@@ -13,9 +15,11 @@ public interface LeaveService {
 
     LeaveResponse getLeaveById(Long leaveId);
 
-    List<LeaveResponse> getAllLeaves();
+    Page<LeaveResponse> getAllLeaves(int page, int size);
 
-    List<LeaveResponse> getLeavesByUserId(Long userId);
+    Page<LeaveResponse> getLeavesByUserId(Long userId, int page, int size);
+
+    LeaveResponse updateLeaveStatus(Long leaveId, UpdateLeaveStatusRequest request);
 
     List<LeaveTypeResponse> getLeaveTypes();
 

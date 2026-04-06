@@ -15,6 +15,9 @@ public record LeaveResponse(
         String comments,
         String trail,
         boolean editable,
+        String status,
+        String approvedBy,
+        String rejectionReason,
         LocalDate createdAt,
         LocalDate updatedAt
 ) {

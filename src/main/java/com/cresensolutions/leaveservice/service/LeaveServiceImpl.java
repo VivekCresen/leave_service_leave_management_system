@@ -4,6 +4,7 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
 import com.cresensolutions.leaveservice.exception.ResourceNotFoundException;
 import com.cresensolutions.leaveservice.model.LeaveRecord;
 import com.cresensolutions.leaveservice.model.LeaveType;
@@ -11,11 +12,13 @@ import com.cresensolutions.leaveservice.model.UserProfile;
 import com.cresensolutions.leaveservice.repository.LeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveTypeRepository;
 import com.cresensolutions.leaveservice.repository.UserProfileRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Set;
 import java.util.stream.Stream;
 
 @Service
@@ -41,8 +44,7 @@ public class LeaveServiceImpl implements LeaveService {
     public LeaveResponse createLeave(CreateLeaveRequest request) {
         validateDateRange(request);
 
-        UserProfile user = userProfileRepository.findById(request.userId())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + request.userId()));
+        UserProfile user = resolveUser(request);
 
         if (!user.isActive()) {
             throw new IllegalArgumentException("Inactive users cannot submit leave requests.");
@@ -73,20 +75,42 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     @Override
-    public List<LeaveResponse> getAllLeaves() {
-        try (Stream<LeaveRecord> leaves = leaveRepository.streamAllByOrderByFromDateDescIdDesc()) {
-            return leaves.map(this::toLeaveResponse)
-                    .toList();
-        }
+    public Page<LeaveResponse> getAllLeaves(int page, int size) {
+        return leaveRepository.findAllByOrderByFromDateDescIdDesc(buildPageable(page, size))
+                .map(this::toLeaveResponse);
     }
 
     @Override
-    public List<LeaveResponse> getLeavesByUserId(Long userId) {
-        ensureUserExists(userId);
-        try (Stream<LeaveRecord> leaves = leaveRepository.streamAllByUserIdOrderByFromDateDescIdDesc(userId)) {
-            return leaves.map(this::toLeaveResponse)
-                    .toList();
+    public Page<LeaveResponse> getLeavesByUserId(Long userId, int page, int size) {
+        Page<LeaveResponse> leaves = leaveRepository
+                .findAllByUserIdOrderByFromDateDescIdDesc(userId, buildPageable(page, size))
+                .map(this::toLeaveResponse);
+
+        if (leaves.hasContent()) {
+            return leaves;
         }
+
+        ensureUserExists(userId);
+        return leaves;
+    }
+
+    @Override
+    @Transactional
+    public LeaveResponse updateLeaveStatus(Long leaveId, UpdateLeaveStatusRequest request) {
+        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
+                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+
+        String status = request.status().toUpperCase();
+
+        if ("REJECTED".equals(status)) {
+            String reason = request.rejectionReason();
+            if (reason == null || reason.isBlank()) {
+                throw new IllegalArgumentException("Rejection reason is required when rejecting a leave request.");
+            }
+        }
+
+        leave.updateStatus(status, request.actorUsername(), request.rejectionReason());
+        return toLeaveResponse(leaveRepository.save(leave));
     }
 
     @Override
@@ -108,13 +132,7 @@ public class LeaveServiceImpl implements LeaveService {
             throw new IllegalArgumentException("Max days is required.");
         }
 
-        if (leaveTypeRepository.existsByLeaveNameIgnoreCase(leaveName)) {
-            throw new IllegalArgumentException("Leave name already exists: " + leaveName);
-        }
-
-        if (leaveTypeRepository.existsByLeaveUniqueNameIgnoreCase(leaveUniqueName)) {
-            throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName);
-        }
+        validateNoLeaveTypeConflicts(leaveTypeRepository.findConflicts(leaveName, leaveUniqueName), leaveName, leaveUniqueName);
 
         LeaveType leaveType = new LeaveType(leaveName, leaveUniqueName, description, maxDays);
         return toLeaveTypeResponse(leaveTypeRepository.save(leaveType));
@@ -135,13 +153,11 @@ public class LeaveServiceImpl implements LeaveService {
             throw new IllegalArgumentException("Max days is required.");
         }
 
-        if (leaveTypeRepository.existsByLeaveNameIgnoreCaseAndIdNot(leaveName, leaveTypeId)) {
-            throw new IllegalArgumentException("Leave name already exists: " + leaveName);
-        }
-
-        if (leaveTypeRepository.existsByLeaveUniqueNameIgnoreCaseAndIdNot(leaveUniqueName, leaveTypeId)) {
-            throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName);
-        }
+        validateNoLeaveTypeConflicts(
+                leaveTypeRepository.findConflictsForUpdate(leaveTypeId, leaveName, leaveUniqueName),
+                leaveName,
+                leaveUniqueName
+        );
 
         leaveType.updateDetails(leaveName, leaveUniqueName, description, maxDays);
         return toLeaveTypeResponse(leaveTypeRepository.save(leaveType));
@@ -153,10 +169,7 @@ public class LeaveServiceImpl implements LeaveService {
         LeaveType leaveType = leaveTypeRepository.findById(leaveTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Leave type not found with id: " + leaveTypeId));
 
-        Set<LeaveRecord> linkedLeaves = Set.copyOf(leaveType.getLeaveRecords());
-        linkedLeaves.forEach(leave -> leave.assignLeaveType(null));
-        leaveRepository.saveAll(linkedLeaves);
-
+        leaveRepository.clearLeaveTypeReferenceByLeaveTypeId(leaveTypeId);
         leaveTypeRepository.delete(leaveType);
     }
 
@@ -164,6 +177,26 @@ public class LeaveServiceImpl implements LeaveService {
         if (!userProfileRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
+    }
+
+    private UserProfile resolveUser(CreateLeaveRequest request) {
+        if (request.userId() != null) {
+            return userProfileRepository.findById(request.userId())
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + request.userId()));
+        }
+
+        if (request.username() != null && !request.username().isBlank()) {
+            return userProfileRepository.findByUserName(request.username().trim())
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + request.username()));
+        }
+
+        throw new IllegalArgumentException("Either userId or username must be provided.");
+    }
+
+    private Pageable buildPageable(int page, int size) {
+        int sanitizedPage = Math.max(page, 0);
+        int sanitizedSize = Math.min(Math.max(size, 1), 100);
+        return PageRequest.of(sanitizedPage, sanitizedSize);
     }
 
     private void validateDateRange(CreateLeaveRequest request) {
@@ -194,6 +227,18 @@ public class LeaveServiceImpl implements LeaveService {
         return normalized.isEmpty() ? null : normalized;
     }
 
+    private void validateNoLeaveTypeConflicts(List<LeaveType> conflicts, String leaveName, String leaveUniqueName) {
+        for (LeaveType conflict : conflicts) {
+            if (conflict.getLeaveName() != null && conflict.getLeaveName().equalsIgnoreCase(leaveName)) {
+                throw new IllegalArgumentException("Leave name already exists: " + leaveName);
+            }
+
+            if (conflict.getLeaveUniqueName() != null && conflict.getLeaveUniqueName().equalsIgnoreCase(leaveUniqueName)) {
+                throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName);
+            }
+        }
+    }
+
     private LeaveTypeResponse toLeaveTypeResponse(LeaveType type) {
         return new LeaveTypeResponse(
                 type.getId(),
@@ -221,6 +266,9 @@ public class LeaveServiceImpl implements LeaveService {
                 leave.getComments(),
                 leave.getTrail(),
                 leave.isEditable(),
+                leave.getStatus() != null ? leave.getStatus() : "PENDING",
+                leave.getApprovedBy(),
+                leave.getRejectionReason(),
                 leave.getCreatedAt(),
                 leave.getUpdatedAt()
         );

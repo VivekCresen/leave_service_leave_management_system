@@ -6,6 +6,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
@@ -17,7 +18,13 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 @Entity
-@Table(name = "leave_types")
+@Table(
+        name = "leave_types",
+        indexes = {
+                @Index(name = "idx_leave_types_name", columnList = "leave_name"),
+                @Index(name = "idx_leave_types_unique_name", columnList = "leave_unique_name")
+        }
+)
 public class LeaveType {
 
     @Id

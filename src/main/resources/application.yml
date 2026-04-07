@@ -31,8 +31,29 @@ spring:
         order_updates: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+  sql:
+    init:
+      mode: always
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:viveksinhchavda@gmail.com}
+    password: ${MAIL_PASSWORD:drauzuufuzlddfwy}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
 server:
   port: 8082
+
+app:
+  mail:
+    from: ${APP_MAIL_FROM:${MAIL_USERNAME:viveksinhchavda@gmail.com}}
+    logo-path: ${APP_MAIL_LOGO_PATH:/home/vivek/Documents/CresenProject/front-end/frontend_leave_management_system/public/assets/logo-6.png}
 
 eureka:
   client:

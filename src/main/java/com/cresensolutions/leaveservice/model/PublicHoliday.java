@@ -1,0 +1,85 @@
+package com.cresensolutions.leaveservice.model;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+
+import java.time.Instant;
+import java.time.LocalDate;
+
+/**
+ * A company-wide public holiday declared by an admin.
+ * All employees are considered on leave on this date.
+ */
+@Entity
+@Table(
+        name = "public_holidays",
+        indexes = {
+                @Index(name = "idx_holiday_date", columnList = "holiday_date")
+        }
+)
+public class PublicHoliday {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "name", nullable = false)
+    private String name;
+
+    @Column(name = "holiday_date", nullable = false)
+    private LocalDate date;
+
+    @Column(name = "description")
+    private String description;
+
+    @Column(name = "created_by")
+    private String createdBy;
+
+    @Column(name = "created_at")
+    private Instant createdAt;
+
+    @Column(name = "updated_at")
+    private Instant updatedAt;
+
+    protected PublicHoliday() {}
+
+    public PublicHoliday(String name, LocalDate date, String description, String createdBy) {
+        this.name = name;
+        this.date = date;
+        this.description = description;
+        this.createdBy = createdBy;
+    }
+
+    @PrePersist
+    void onCreate() {
+        Instant now = Instant.now();
+        if (createdAt == null) createdAt = now;
+        updatedAt = now;
+    }
+
+    @PreUpdate
+    void onUpdate() {
+        updatedAt = Instant.now();
+    }
+
+    public Long getId() { return id; }
+    public String getName() { return name; }
+    public LocalDate getDate() { return date; }
+    public String getDescription() { return description; }
+    public String getCreatedBy() { return createdBy; }
+    public Instant getCreatedAt() { return createdAt; }
+    public Instant getUpdatedAt() { return updatedAt; }
+
+    public void update(String name, LocalDate date, String description) {
+        this.name = name;
+        this.date = date;
+        this.description = description;
+    }
+}

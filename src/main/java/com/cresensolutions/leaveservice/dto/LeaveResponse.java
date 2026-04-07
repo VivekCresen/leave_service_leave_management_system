@@ -1,6 +1,7 @@
 package com.cresensolutions.leaveservice.dto;
 
 import java.time.LocalDate;
+import java.util.List;
 
 public record LeaveResponse(
         Long id,
@@ -19,6 +20,9 @@ public record LeaveResponse(
         String approvedBy,
         String rejectionReason,
         LocalDate createdAt,
-        LocalDate updatedAt
+        LocalDate updatedAt,
+        boolean halfDay,
+        String halfDaySession,
+        List<Long> notifyUserIds
 ) {
 }

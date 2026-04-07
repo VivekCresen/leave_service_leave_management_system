@@ -19,19 +19,19 @@ public interface EmployeeLeaveRepository extends JpaRepository<EmployeeLeave, Lo
             SET leaves = jsonb_set(
                 leaves::jsonb,
                 ARRAY[:leaveKey],
-                to_jsonb(GREATEST(0, COALESCE((leaves::jsonb->>:leaveKey)::int, 0) - :days))
+                to_jsonb(GREATEST(0, COALESCE((leaves::jsonb->>:leaveKey)::numeric, 0) - :days))
             )::text
             WHERE user_id = :userId
             """, nativeQuery = true)
     int deductLeaveBalance(@Param("userId") Long userId,
                            @Param("leaveKey") String leaveKey,
-                           @Param("days") int days);
+                           @Param("days") double days);
 
     @Query(value = """
-            SELECT COALESCE((leaves::jsonb->>:leaveKey)::int, 0)
+            SELECT COALESCE((leaves::jsonb->>:leaveKey)::numeric, 0)
             FROM employee_leave
             WHERE user_id = :userId
             """, nativeQuery = true)
-    Integer getRemainingBalance(@Param("userId") Long userId,
-                                @Param("leaveKey") String leaveKey);
+    Double getRemainingBalance(@Param("userId") Long userId,
+                               @Param("leaveKey") String leaveKey);
 }

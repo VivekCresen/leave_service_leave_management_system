@@ -73,6 +73,12 @@ public class LeaveRecord {
     @Column(name = "rejection_reason")
     private String rejectionReason;
 
+    @Column(name = "half_day")
+    private Boolean halfDay = false;
+
+    @Column(name = "half_day_session")
+    private String halfDaySession;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", foreignKey = @ForeignKey(name = "fk_leave_user"))
     private UserProfile user;
@@ -81,7 +87,9 @@ public class LeaveRecord {
     @JoinColumn(name = "leave_type_id", foreignKey = @ForeignKey(name = "fk_leave_type"))
     private LeaveType leaveTypeReference;
 
-    protected LeaveRecord() {
+    protected LeaveRecord() {}
+
+    protected LeaveRecord(UserProfile userProfile, LeaveType linkedType, LocalDate now, LocalDate toDate, String trip, String ok, String trail, boolean editable) {
     }
 
     public LeaveRecord(
@@ -92,7 +100,9 @@ public class LeaveRecord {
             String reason,
             String comments,
             String trail,
-            boolean editable
+            boolean editable,
+            boolean halfDay,
+            String halfDaySession
     ) {
         assignUser(user);
         assignLeaveType(leaveTypeReference);
@@ -102,6 +112,14 @@ public class LeaveRecord {
         this.comments = comments;
         this.trail = trail;
         this.editable = editable;
+        this.halfDay = halfDay;
+        this.halfDaySession = halfDay ? normalizeSession(halfDaySession) : null;
+    }
+
+    private static String normalizeSession(String session) {
+        if (session == null) return null;
+        String upper = session.trim().toUpperCase();
+        return (upper.equals("MORNING") || upper.equals("AFTERNOON")) ? upper : null;
     }
 
     @PrePersist
@@ -181,10 +199,31 @@ public class LeaveRecord {
         return rejectionReason;
     }
 
+    public boolean isHalfDay() {
+        return Boolean.TRUE.equals(halfDay);
+    }
+
+    public String getHalfDaySession() {
+        return halfDaySession;
+    }
+
     public void updateStatus(String status, String actorUsername, String rejectionReason) {
         this.status = status;
         this.approvedBy = actorUsername;
         this.rejectionReason = rejectionReason;
+    }
+
+    public void updateDetails(LeaveType leaveTypeReference, LocalDate fromDate, LocalDate toDate,
+                              String reason, String comments, String trail,
+                              boolean halfDay, String halfDaySession) {
+        assignLeaveType(leaveTypeReference);
+        this.fromDate = fromDate;
+        this.toDate = toDate;
+        this.reason = reason;
+        this.comments = comments;
+        this.trail = trail;
+        this.halfDay = halfDay;
+        this.halfDaySession = halfDay ? normalizeSession(halfDaySession) : null;
     }
 
     public UserProfile getUser() {

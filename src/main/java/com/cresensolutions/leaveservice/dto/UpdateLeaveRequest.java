@@ -6,11 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 import java.util.List;
 
-public record CreateLeaveRequest(
-        Long userId,
-
-        String username,
-
+public record UpdateLeaveRequest(
         @NotNull(message = "Leave type id is required")
         Integer leaveTypeId,
 
@@ -25,9 +21,7 @@ public record CreateLeaveRequest(
 
         String comments,
         String trail,
-        Boolean editable,
         Boolean halfDay,
         String halfDaySession,
         List<Long> notifyUserIds
-) {
-}
+) {}

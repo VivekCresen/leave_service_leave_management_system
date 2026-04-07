@@ -4,18 +4,22 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
+import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
 import com.cresensolutions.leaveservice.service.LeaveService;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -83,6 +87,20 @@ public class LeaveController {
         return leaveService.updateLeaveStatus(leaveId, request);
     }
 
+    @PutMapping("/{leaveId}")
+    public LeaveResponse updateLeave(
+            @PathVariable Long leaveId,
+            @Valid @RequestBody UpdateLeaveRequest request
+    ) {
+        return leaveService.updateLeave(leaveId, request);
+    }
+
+    @DeleteMapping("/{leaveId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deletePendingLeave(@PathVariable Long leaveId) {
+        leaveService.deletePendingLeave(leaveId);
+    }
+
     @GetMapping("/types")
     public List<LeaveTypeResponse> getLeaveTypes() {
         return leaveService.getLeaveTypes();
@@ -104,5 +122,14 @@ public class LeaveController {
     @DeleteMapping("/types/{leaveTypeId}")
     public void deleteLeaveType(@PathVariable Integer leaveTypeId) {
         leaveService.deleteLeaveType(leaveTypeId);
+    }
+
+    /**
+     * Returns the list of users that the requesting user can notify when submitting a leave.
+     * Employees see their teammates; managers see their team members.
+     */
+    @GetMapping("/notify-users")
+    public List<NotifyUserResponse> getNotifyUsers(@RequestParam String username) {
+        return leaveService.getNotifyUsers(username);
     }
 }

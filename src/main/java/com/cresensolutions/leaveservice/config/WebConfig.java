@@ -10,6 +10,7 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registerLocalAngularCors(registry, "/api/leaves/**");
+        registerLocalAngularCors(registry, "/api/holidays/**");
     }
 
     private void registerLocalAngularCors(CorsRegistry registry, String pathPattern) {

@@ -19,7 +19,7 @@ import jakarta.persistence.UniqueConstraint;
         uniqueConstraints = {
                 @UniqueConstraint(
                         name = "uq_leave_notify_user",
-                        columnNames = {"leave_id", "user_id"}
+                        columnNames = {"leave_application_id", "user_id"}
                 )
         }
 )
@@ -30,8 +30,8 @@ public class LeaveNotifyUser {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "leave_id", nullable = false,
-            foreignKey = @ForeignKey(name = "fk_notify_leave"))
+    @JoinColumn(name = "leave_application_id", nullable = false,
+            foreignKey = @ForeignKey(name = "fk_notify_leave_app"))
     private LeaveRecord leave;
 
     @ManyToOne(fetch = FetchType.LAZY)

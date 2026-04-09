@@ -10,8 +10,7 @@ public record LeaveResponse(
         String emailId,
         Integer leaveTypeId,
         String leaveType,
-        LocalDate fromDate,
-        LocalDate toDate,
+        List<LeaveDateDto> leaveDates,
         String reason,
         String comments,
         String trail,
@@ -21,8 +20,5 @@ public record LeaveResponse(
         String rejectionReason,
         LocalDate createdAt,
         LocalDate updatedAt,
-        boolean halfDay,
-        String halfDaySession,
         List<Long> notifyUserIds
-) {
-}
+) {}

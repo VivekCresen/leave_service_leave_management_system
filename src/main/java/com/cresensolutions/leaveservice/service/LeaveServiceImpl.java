@@ -2,22 +2,23 @@ package com.cresensolutions.leaveservice.service;
 
 import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
+import com.cresensolutions.leaveservice.dto.LeaveDateDto;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
 import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
 import com.cresensolutions.leaveservice.exception.ResourceNotFoundException;
-import com.cresensolutions.leaveservice.model.EmployeeLeave;
+import com.cresensolutions.leaveservice.model.LeaveDate;
 import com.cresensolutions.leaveservice.model.LeaveNotifyUser;
 import com.cresensolutions.leaveservice.model.LeaveRecord;
 import com.cresensolutions.leaveservice.model.LeaveType;
 import com.cresensolutions.leaveservice.model.UserProfile;
 import com.cresensolutions.leaveservice.repository.EmployeeLeaveRepository;
+import com.cresensolutions.leaveservice.repository.LeaveDateRepository;
 import com.cresensolutions.leaveservice.repository.LeaveNotifyUserRepository;
 import com.cresensolutions.leaveservice.repository.LeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveTypeRepository;
-import com.cresensolutions.leaveservice.repository.PublicHolidayRepository;
 import com.cresensolutions.leaveservice.repository.UserProfileRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
@@ -26,19 +27,19 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.temporal.ChronoUnit;
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
-
 @Service
 @Transactional(readOnly = true)
 public class LeaveServiceImpl implements LeaveService {
 
     private final LeaveRepository leaveRepository;
+    private final LeaveDateRepository leaveDateRepository;
     private final UserProfileRepository userProfileRepository;
     private final LeaveTypeRepository leaveTypeRepository;
     private final EmployeeLeaveRepository employeeLeaveRepository;
@@ -48,6 +49,7 @@ public class LeaveServiceImpl implements LeaveService {
 
     public LeaveServiceImpl(
             LeaveRepository leaveRepository,
+            LeaveDateRepository leaveDateRepository,
             UserProfileRepository userProfileRepository,
             LeaveTypeRepository leaveTypeRepository,
             EmployeeLeaveRepository employeeLeaveRepository,
@@ -56,6 +58,7 @@ public class LeaveServiceImpl implements LeaveService {
             @Qualifier("leaveTaskExecutor") Executor leaveTaskExecutor
     ) {
         this.leaveRepository = leaveRepository;
+        this.leaveDateRepository = leaveDateRepository;
         this.userProfileRepository = userProfileRepository;
         this.leaveTypeRepository = leaveTypeRepository;
         this.employeeLeaveRepository = employeeLeaveRepository;
@@ -67,7 +70,9 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     @Transactional
     public LeaveResponse createLeave(CreateLeaveRequest request) {
-        validateDateRange(request);
+        if (request.leaveDates() == null || request.leaveDates().isEmpty()) {
+            throw new IllegalArgumentException("At least one leave date is required.");
+        }
 
         UserProfile user = resolveUser(request);
         LeaveType leaveType = leaveTypeRepository.findById(request.leaveTypeId())
@@ -79,11 +84,7 @@ public class LeaveServiceImpl implements LeaveService {
         }
 
         validateGenderRestriction(leaveType, user);
-        if (leaveRepository.existsPendingLeaveByUserAndType(user.getId(), leaveType.getId())) {
-            throw new IllegalArgumentException(
-                    "You already have a pending " + leaveType.getLeaveName() + " request. Please wait for it to be processed.");
-        }
-        
+
         String leaveUniqueName = leaveType.getLeaveUniqueName();
         if (leaveUniqueName != null && !leaveUniqueName.isBlank()) {
             Double remaining = employeeLeaveRepository.getRemainingBalance(user.getId(), leaveUniqueName);
@@ -94,31 +95,21 @@ public class LeaveServiceImpl implements LeaveService {
         }
 
         LeaveRecord leave = new LeaveRecord(
-                user,
-                leaveType,
-                request.fromDate(),
-                request.toDate(),
+                user, leaveType,
                 request.reason().trim(),
                 request.comments(),
                 request.trail(),
-                request.editable() == null || request.editable(),
-                Boolean.TRUE.equals(request.halfDay()),
-                request.halfDaySession()
+                request.editable() == null || request.editable()
         );
 
         LeaveRecord saved = leaveRepository.save(leave);
 
-        // Persist notify-user entries (CC recipients)
-        if (request.notifyUserIds() != null && !request.notifyUserIds().isEmpty()) {
-            List<LeaveNotifyUser> notifyEntries = request.notifyUserIds().stream()
-                    .distinct()
-                    .filter(uid -> !uid.equals(user.getId())) // exclude the requester themselves
-                    .map(uid -> userProfileRepository.findById(uid).orElse(null))
-                    .filter(u -> u != null)
-                    .map(u -> new LeaveNotifyUser(saved, u))
-                    .toList();
-            leaveNotifyUserRepository.saveAll(notifyEntries);
-        }
+        List<LeaveDate> dates = request.leaveDates().stream()
+                .map(dto -> new LeaveDate(saved, dto.date(), dto.dayType()))
+                .toList();
+        leaveDateRepository.saveAll(dates);
+
+        saveNotifyUsers(saved, user.getId(), request.notifyUserIds());
 
         return toLeaveResponse(saved);
     }
@@ -132,8 +123,7 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Override
     public Page<LeaveResponse> getAllLeaves(int page, int size) {
-        return leaveRepository.findAllPaged(buildPageable(page, size))
-                .map(this::toLeaveResponse);
+        return leaveRepository.findAllPaged(buildPageable(page, size)).map(this::toLeaveResponse);
     }
 
     @Override
@@ -141,7 +131,6 @@ public class LeaveServiceImpl implements LeaveService {
         Page<LeaveResponse> result = leaveRepository
                 .findByUserIdPaged(userId, buildPageable(page, size))
                 .map(this::toLeaveResponse);
-
         if (!result.hasContent() && !userProfileRepository.existsById(userId)) {
             throw new ResourceNotFoundException("User not found with id: " + userId);
         }
@@ -151,10 +140,8 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     public Page<LeaveResponse> getLeavesByUsername(String username, int page, int size) {
         String normalized = requireNonBlank(username, "Username is required.");
-
-       userProfileRepository.findByUserName(normalized)
+        userProfileRepository.findByUserName(normalized)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + normalized));
-
         return leaveRepository.findByUsernamePaged(normalized, buildPageable(page, size))
                 .map(this::toLeaveResponse);
     }
@@ -174,22 +161,20 @@ public class LeaveServiceImpl implements LeaveService {
 
         String status = request.status().toUpperCase();
 
-        if ("REJECTED".equals(status)) {
-            String reason = request.rejectionReason();
-            if (reason == null || reason.isBlank()) {
-                throw new IllegalArgumentException("Rejection reason is required when rejecting a leave.");
-            }
+        if ("REJECTED".equals(status) && (request.rejectionReason() == null || request.rejectionReason().isBlank())) {
+            throw new IllegalArgumentException("Rejection reason is required when rejecting a leave.");
         }
 
         leave.updateStatus(status, request.actorUsername(), request.rejectionReason());
         LeaveRecord saved = leaveRepository.save(leave);
 
-       if ("APPROVED".equals(status)) {
+        if ("APPROVED".equals(status)) {
             Long userId = leave.getUserId();
             Integer leaveTypeId = leave.getLeaveTypeId();
-            double days = leave.isHalfDay()
-                    ? 0.5
-                    : (double) (ChronoUnit.DAYS.between(leave.getFromDate(), leave.getToDate()) + 1);
+            List<LeaveDate> dates = leaveDateRepository.findByApplicationId(saved.getId());
+            double days = dates.stream()
+                    .mapToDouble(d -> d.getDayType() != null && d.getDayType().contains("HALF") ? 0.5 : 1.0)
+                    .sum();
 
             CompletableFuture.runAsync(
                     () -> deductLeaveBalance(userId, leaveTypeId, days),
@@ -200,25 +185,17 @@ public class LeaveServiceImpl implements LeaveService {
                 return null;
             });
 
-            // Send notification emails to all selected notify users
             List<String> notifyEmails = leaveNotifyUserRepository.findByLeaveId(saved.getId())
-                    .stream()
-                    .map(LeaveNotifyUser::getUserEmail)
-                    .filter(e -> e != null && !e.isBlank())
-                    .toList();
+                    .stream().map(LeaveNotifyUser::getUserEmail)
+                    .filter(e -> e != null && !e.isBlank()).toList();
 
             if (!notifyEmails.isEmpty()) {
-                UserProfile leaveUser = saved.getUser();
-                String employeeName = leaveUser != null ? leaveUser.getFullName() : "A team member";
+                String employeeName = saved.getUser() != null ? saved.getUser().getFullName() : "A team member";
+                LocalDate from = dates.stream().map(LeaveDate::getLeaveDate).min(LocalDate::compareTo).orElse(null);
+                LocalDate to = dates.stream().map(LeaveDate::getLeaveDate).max(LocalDate::compareTo).orElse(null);
                 leaveEmailService.sendLeaveApprovedNotification(
-                        notifyEmails,
-                        employeeName,
-                        saved.getLeaveType(),
-                        saved.getFromDate(),
-                        saved.getToDate(),
-                        saved.isHalfDay(),
-                        saved.getHalfDaySession(),
-                        saved.getReason()
+                        notifyEmails, employeeName, saved.getLeaveType(),
+                        from, to, false, null, saved.getReason()
                 );
             }
         }
@@ -235,41 +212,25 @@ public class LeaveServiceImpl implements LeaveService {
         if (!"PENDING".equalsIgnoreCase(leave.getStatus())) {
             throw new IllegalArgumentException("Only PENDING leave applications can be edited.");
         }
-
-        if (request.toDate().isBefore(request.fromDate())) {
-            throw new IllegalArgumentException("To date must be on or after from date.");
+        if (request.leaveDates() == null || request.leaveDates().isEmpty()) {
+            throw new IllegalArgumentException("At least one leave date is required.");
         }
 
         LeaveType leaveType = leaveTypeRepository.findById(request.leaveTypeId())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Leave type not found with id: " + request.leaveTypeId()));
 
-        leave.updateDetails(
-                leaveType,
-                request.fromDate(),
-                request.toDate(),
-                request.reason().trim(),
-                request.comments(),
-                request.trail(),
-                Boolean.TRUE.equals(request.halfDay()),
-                request.halfDaySession()
-        );
-
+        leave.updateDetails(leaveType, request.reason().trim(), request.comments(), request.trail());
         LeaveRecord saved = leaveRepository.save(leave);
 
-        // Replace notify-user entries
+        leaveDateRepository.deleteByApplicationId(saved.getId());
+        List<LeaveDate> newDates = request.leaveDates().stream()
+                .map(dto -> new LeaveDate(saved, dto.date(), dto.dayType()))
+                .toList();
+        leaveDateRepository.saveAll(newDates);
+
         leaveNotifyUserRepository.deleteByLeaveId(saved.getId());
-        if (request.notifyUserIds() != null && !request.notifyUserIds().isEmpty()) {
-            Long userId = saved.getUserId();
-            List<LeaveNotifyUser> notifyEntries = request.notifyUserIds().stream()
-                    .distinct()
-                    .filter(uid -> !uid.equals(userId))
-                    .map(uid -> userProfileRepository.findById(uid).orElse(null))
-                    .filter(u -> u != null)
-                    .map(u -> new LeaveNotifyUser(saved, u))
-                    .toList();
-            leaveNotifyUserRepository.saveAll(notifyEntries);
-        }
+        saveNotifyUsers(saved, saved.getUserId(), request.notifyUserIds());
 
         return toLeaveResponse(saved);
     }
@@ -279,20 +240,17 @@ public class LeaveServiceImpl implements LeaveService {
     public void deletePendingLeave(Long leaveId) {
         LeaveRecord leave = leaveRepository.findById(leaveId)
                 .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
-
         if (!"PENDING".equalsIgnoreCase(leave.getStatus())) {
             throw new IllegalArgumentException("Only PENDING leave applications can be deleted.");
         }
-
         leaveNotifyUserRepository.deleteByLeaveId(leaveId);
+        leaveDateRepository.deleteByApplicationId(leaveId);
         leaveRepository.deleteById(leaveId);
     }
 
     @Override
     public List<LeaveTypeResponse> getLeaveTypes() {
-        return leaveTypeRepository.findAllOrderedById().stream()
-                .map(this::toLeaveTypeResponse)
-                .toList();
+        return leaveTypeRepository.findAllOrderedById().stream().map(this::toLeaveTypeResponse).toList();
     }
 
     @Override
@@ -302,16 +260,9 @@ public class LeaveServiceImpl implements LeaveService {
         String leaveUniqueName = normalizeUniqueName(request.leaveUniqueName());
         Integer maxDays = Optional.ofNullable(request.maxDays())
                 .orElseThrow(() -> new IllegalArgumentException("Max days is required."));
-
         validateNoConflicts(leaveTypeRepository.findConflicts(leaveName, leaveUniqueName), leaveName, leaveUniqueName);
-
-        LeaveType leaveType = new LeaveType(
-                leaveName,
-                leaveUniqueName,
-                trimOrNull(request.description()),
-                maxDays,
-                normalizeGender(request.genderRestriction())
-        );
+        LeaveType leaveType = new LeaveType(leaveName, leaveUniqueName, trimOrNull(request.description()),
+                maxDays, normalizeGender(request.genderRestriction()));
         return toLeaveTypeResponse(leaveTypeRepository.save(leaveType));
     }
 
@@ -320,17 +271,12 @@ public class LeaveServiceImpl implements LeaveService {
     public LeaveTypeResponse updateLeaveType(Integer leaveTypeId, CreateLeaveTypeRequest request) {
         LeaveType leaveType = leaveTypeRepository.findById(leaveTypeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Leave type not found with id: " + leaveTypeId));
-
         String leaveName = requireNonBlank(request.leaveName(), "Leave name is required");
         String leaveUniqueName = normalizeUniqueName(request.leaveUniqueName());
         Integer maxDays = Optional.ofNullable(request.maxDays())
                 .orElseThrow(() -> new IllegalArgumentException("Max days is required."));
-
-        validateNoConflicts(
-                leaveTypeRepository.findConflictsForUpdate(leaveTypeId, leaveName, leaveUniqueName),
-                leaveName, leaveUniqueName
-        );
-
+        validateNoConflicts(leaveTypeRepository.findConflictsForUpdate(leaveTypeId, leaveName, leaveUniqueName),
+                leaveName, leaveUniqueName);
         leaveType.updateDetails(leaveName, leaveUniqueName, trimOrNull(request.description()),
                 maxDays, normalizeGender(request.genderRestriction()));
         return toLeaveTypeResponse(leaveTypeRepository.save(leaveType));
@@ -346,52 +292,54 @@ public class LeaveServiceImpl implements LeaveService {
         leaveTypeRepository.deleteById(leaveTypeId);
     }
 
-    @Transactional
-    protected void deductLeaveBalance(Long userId, Integer leaveTypeId, double days) {
-        if (userId == null || leaveTypeId == null) return;
-
-        String leaveUniqueName = leaveTypeRepository.findUniqueNameById(leaveTypeId);
-        if (leaveUniqueName == null || leaveUniqueName.isBlank()) return;
-
-        employeeLeaveRepository.deductLeaveBalance(userId, leaveUniqueName, days);
-    }
-
     @Override
     public List<NotifyUserResponse> getNotifyUsers(String username) {
         String normalized = requireNonBlank(username, "Username is required.");
         UserProfile requestingUser = userProfileRepository.findByUserName(normalized)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + normalized));
-
         String role = requestingUser.getRole() == null ? "" : requestingUser.getRole().toUpperCase();
         List<UserProfile> candidates;
-
         if ("ADMIN".equals(role) || "MANAGER".equals(role)) {
             candidates = userProfileRepository.findAllActiveExcept(requestingUser.getId());
         } else {
             String createdBy = requestingUser.getCreatedBy();
-            if (createdBy == null || createdBy.isBlank()) {
-                return Collections.emptyList();
-            }
+            if (createdBy == null || createdBy.isBlank()) return Collections.emptyList();
             candidates = userProfileRepository.findActiveByManagerUsername(createdBy).stream()
-                    .filter(u -> !u.getId().equals(requestingUser.getId()))
-                    .toList();
+                    .filter(u -> !u.getId().equals(requestingUser.getId())).toList();
         }
-
         return candidates.stream()
                 .map(u -> new NotifyUserResponse(u.getId(), u.getFullName(), u.getEmailId(), u.getRole()))
                 .toList();
     }
 
+    private void saveNotifyUsers(LeaveRecord saved, Long ownerId, List<Long> notifyUserIds) {
+        if (notifyUserIds == null || notifyUserIds.isEmpty()) return;
+        List<LeaveNotifyUser> entries = notifyUserIds.stream()
+                .distinct()
+                .filter(uid -> !uid.equals(ownerId))
+                .map(uid -> userProfileRepository.findById(uid).orElse(null))
+                .filter(u -> u != null)
+                .map(u -> new LeaveNotifyUser(saved, u))
+                .toList();
+        leaveNotifyUserRepository.saveAll(entries);
+    }
+
+    @Transactional
+    protected void deductLeaveBalance(Long userId, Integer leaveTypeId, double days) {
+        if (userId == null || leaveTypeId == null) return;
+        String leaveUniqueName = leaveTypeRepository.findUniqueNameById(leaveTypeId);
+        if (leaveUniqueName == null || leaveUniqueName.isBlank()) return;
+        employeeLeaveRepository.deductLeaveBalance(userId, leaveUniqueName, days);
+    }
+
     private UserProfile resolveUser(CreateLeaveRequest request) {
         if (request.userId() != null) {
             return userProfileRepository.findById(request.userId())
-                    .orElseThrow(() -> new ResourceNotFoundException(
-                            "User not found with id: " + request.userId()));
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found with id: " + request.userId()));
         }
         if (request.username() != null && !request.username().isBlank()) {
             return userProfileRepository.findByUserName(request.username().trim())
-                    .orElseThrow(() -> new ResourceNotFoundException(
-                            "User not found with username: " + request.username()));
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found with username: " + request.username()));
         }
         throw new IllegalArgumentException("Either userId or username must be provided.");
     }
@@ -399,31 +347,41 @@ public class LeaveServiceImpl implements LeaveService {
     private void validateGenderRestriction(LeaveType leaveType, UserProfile user) {
         String restriction = leaveType.getGenderRestriction();
         if (restriction == null || restriction.isBlank()) return;
-
         String userGender = user.getGender() == null ? "" : user.getGender().toUpperCase();
         if (!restriction.equalsIgnoreCase(userGender)) {
             String allowed = restriction.charAt(0) + restriction.substring(1).toLowerCase();
-            throw new IllegalArgumentException(
-                    leaveType.getLeaveName() + " is only available for " + allowed + " employees.");
-        }
-    }
-
-    private void validateDateRange(CreateLeaveRequest request) {
-        if (request.toDate().isBefore(request.fromDate())) {
-            throw new IllegalArgumentException("To date must be on or after from date.");
+            throw new IllegalArgumentException(leaveType.getLeaveName() + " is only available for " + allowed + " employees.");
         }
     }
 
     private void validateNoConflicts(List<LeaveType> conflicts, String leaveName, String leaveUniqueName) {
-      conflicts.stream()
-                .filter(c -> c.getLeaveName() != null && c.getLeaveName().equalsIgnoreCase(leaveName))
-                .findFirst()
-                .ifPresent(c -> { throw new IllegalArgumentException("Leave name already exists: " + leaveName); });
+        conflicts.stream().filter(c -> c.getLeaveName() != null && c.getLeaveName().equalsIgnoreCase(leaveName))
+                .findFirst().ifPresent(c -> { throw new IllegalArgumentException("Leave name already exists: " + leaveName); });
+        conflicts.stream().filter(c -> c.getLeaveUniqueName() != null && c.getLeaveUniqueName().equalsIgnoreCase(leaveUniqueName))
+                .findFirst().ifPresent(c -> { throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName); });
+    }
 
-        conflicts.stream()
-                .filter(c -> c.getLeaveUniqueName() != null && c.getLeaveUniqueName().equalsIgnoreCase(leaveUniqueName))
-                .findFirst()
-                .ifPresent(c -> { throw new IllegalArgumentException("Leave unique name already exists: " + leaveUniqueName); });
+    private LeaveResponse toLeaveResponse(LeaveRecord leave) {
+        UserProfile user = leave.getUser();
+        List<LeaveDateDto> dates = leaveDateRepository.findByApplicationId(leave.getId())
+                .stream().map(d -> new LeaveDateDto(d.getLeaveDate(), d.getDayType())).toList();
+        List<Long> notifyUserIds = leaveNotifyUserRepository.findByLeaveId(leave.getId())
+                .stream().map(LeaveNotifyUser::getUserId).toList();
+        return new LeaveResponse(
+                leave.getId(), leave.getUserId(),
+                user == null ? null : user.getFullName(),
+                leave.getEmailId(), leave.getLeaveTypeId(), leave.getLeaveType(),
+                dates, leave.getReason(), leave.getComments(), leave.getTrail(),
+                leave.isEditable(), leave.getStatus() != null ? leave.getStatus() : "PENDING",
+                leave.getApprovedBy(), leave.getRejectionReason(),
+                leave.getCreatedAt(), leave.getUpdatedAt(), notifyUserIds
+        );
+    }
+
+    private LeaveTypeResponse toLeaveTypeResponse(LeaveType type) {
+        return new LeaveTypeResponse(type.getId(), type.getLeaveName(), type.getLeaveUniqueName(),
+                type.getDescription(), type.getMaxDays(), type.getGenderRestriction(),
+                type.getCreatedAt(), type.getUpdatedAt());
     }
 
     private Pageable buildPageable(int page, int size) {
@@ -449,46 +407,5 @@ public class LeaveServiceImpl implements LeaveService {
         if (value == null || value.isBlank()) return null;
         String upper = value.trim().toUpperCase();
         return (upper.equals("MALE") || upper.equals("FEMALE")) ? upper : null;
-    }
-
-    private LeaveResponse toLeaveResponse(LeaveRecord leave) {
-        UserProfile user = leave.getUser();
-        List<Long> notifyUserIds = leaveNotifyUserRepository.findByLeaveId(leave.getId())
-                .stream().map(LeaveNotifyUser::getUserId).toList();
-        return new LeaveResponse(
-                leave.getId(),
-                leave.getUserId(),
-                user == null ? null : user.getFullName(),
-                leave.getEmailId(),
-                leave.getLeaveTypeId(),
-                leave.getLeaveType(),
-                leave.getFromDate(),
-                leave.getToDate(),
-                leave.getReason(),
-                leave.getComments(),
-                leave.getTrail(),
-                leave.isEditable(),
-                leave.getStatus() != null ? leave.getStatus() : "PENDING",
-                leave.getApprovedBy(),
-                leave.getRejectionReason(),
-                leave.getCreatedAt(),
-                leave.getUpdatedAt(),
-                leave.isHalfDay(),
-                leave.getHalfDaySession(),
-                notifyUserIds
-        );
-    }
-
-    private LeaveTypeResponse toLeaveTypeResponse(LeaveType type) {
-        return new LeaveTypeResponse(
-                type.getId(),
-                type.getLeaveName(),
-                type.getLeaveUniqueName(),
-                type.getDescription(),
-                type.getMaxDays(),
-                type.getGenderRestriction(),
-                type.getCreatedAt(),
-                type.getUpdatedAt()
-        );
     }
 }

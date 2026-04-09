@@ -22,7 +22,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/holidays")
-public class HolidayController {
+public class  HolidayController {
 
     private final PublicHolidayRepository holidayRepository;
 

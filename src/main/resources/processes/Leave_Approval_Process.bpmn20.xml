@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:flowable="http://flowable.org/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC" xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI" typeLanguage="http://www.w3.org/2001/XMLSchema" expressionLanguage="http://www.w3.org/1999/XPath" targetNamespace="http://www.flowable.org/processdef" exporter="Flowable Open Source Modeler" exporterVersion="6.8.0">
+  <process id="leaveApprovalProcess" name="Leave Approval Process" isExecutable="true">
+    <startEvent id="start" name="Leave Requested" flowable:formFieldValidation="true"/>
+    <sequenceFlow id="flow1" sourceRef="start" targetRef="managerApproval"/>
+    <userTask id="managerApproval" name="Manager Approval" flowable:assignee="${managerId}" flowable:formFieldValidation="true">
+      <extensionElements>
+        <modeler:initiator-can-complete xmlns:modeler="http://flowable.org/modeler"><![CDATA[false]]></modeler:initiator-can-complete>
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="flow2" sourceRef="managerApproval" targetRef="approvalGateway"/>
+    <exclusiveGateway id="approvalGateway" name="Approved?"/>
+    <sequenceFlow id="flowApproved" name="Yes" sourceRef="approvalGateway" targetRef="notifyApproved">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${approved == true}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flowRejected" name="No" sourceRef="approvalGateway" targetRef="notifyRejected">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${approved == false}]]></conditionExpression>
+    </sequenceFlow>
+    <serviceTask id="notifyApproved" name="Notify Approved" flowable:expression="${leaveNotificationService.notifyApproved(execution)}"/>
+    <serviceTask id="notifyRejected" name="Notify Rejected" flowable:expression="${leaveNotificationService.notifyRejected(execution)}"/>
+    <sequenceFlow id="flow3" sourceRef="notifyApproved" targetRef="end"/>
+    <sequenceFlow id="flow4" sourceRef="notifyRejected" targetRef="end"/>
+    <endEvent id="end" name="Process Complete"/>
+  </process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_leaveApprovalProcess">
+    <bpmndi:BPMNPlane bpmnElement="leaveApprovalProcess" id="BPMNPlane_leaveApprovalProcess">
+      <bpmndi:BPMNShape bpmnElement="start" id="BPMNShape_start">
+        <omgdc:Bounds height="30.0" width="30.0" x="80.0" y="160.0"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="managerApproval" id="BPMNShape_managerApproval">
+        <omgdc:Bounds height="80.0" width="120.0" x="180.0" y="138.0"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="approvalGateway" id="BPMNShape_approvalGateway">
+        <omgdc:Bounds height="40.0" width="40.0" x="370.0" y="153.0"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="notifyApproved" id="BPMNShape_notifyApproved">
+        <omgdc:Bounds height="80.0" width="120.0" x="465.0" y="58.0"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="notifyRejected" id="BPMNShape_notifyRejected">
+        <omgdc:Bounds height="80.0" width="120.0" x="450.0" y="240.0"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="end" id="BPMNShape_end">
+        <omgdc:Bounds height="28.0" width="28.0" x="720.0" y="180.0"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge bpmnElement="flow1" id="BPMNEdge_flow1" flowable:sourceDockerX="15.0" flowable:sourceDockerY="15.0" flowable:targetDockerX="60.0" flowable:targetDockerY="40.0">
+        <omgdi:waypoint x="109.94676195778726" y="175.30924569912648"/>
+        <omgdi:waypoint x="180.0" y="176.75862068965517"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow2" id="BPMNEdge_flow2" flowable:sourceDockerX="60.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="20.0" flowable:targetDockerY="20.0">
+        <omgdi:waypoint x="299.95000000000005" y="176.0"/>
+        <omgdi:waypoint x="370.6451612903223" y="173.64354838709676"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow3" id="BPMNEdge_flow3" flowable:sourceDockerX="60.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="14.0" flowable:targetDockerY="14.0">
+        <omgdi:waypoint x="584.95" y="98.0"/>
+        <omgdi:waypoint x="702.0" y="100.0"/>
+        <omgdi:waypoint x="729.4870757882923" y="180.7346874461627"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow4" id="BPMNEdge_flow4" flowable:sourceDockerX="60.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="14.0" flowable:targetDockerY="14.0">
+        <omgdi:waypoint x="569.95" y="280.0"/>
+        <omgdi:waypoint x="702.0" y="280.0"/>
+        <omgdi:waypoint x="729.1164029949657" y="207.077793140576"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowRejected" id="BPMNEdge_flowRejected" flowable:sourceDockerX="20.0" flowable:sourceDockerY="20.0" flowable:targetDockerX="60.0" flowable:targetDockerY="40.0">
+        <omgdi:waypoint x="390.890625" y="192.0512711864407"/>
+        <omgdi:waypoint x="395.0" y="280.0"/>
+        <omgdi:waypoint x="450.0" y="280.0"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowApproved" id="BPMNEdge_flowApproved" flowable:sourceDockerX="20.0" flowable:sourceDockerY="20.0" flowable:targetDockerX="60.0" flowable:targetDockerY="40.0">
+        <omgdi:waypoint x="391.27884615384613" y="154.28205128205124"/>
+        <omgdi:waypoint x="395.0" y="100.0"/>
+        <omgdi:waypoint x="465.0" y="98.0"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>

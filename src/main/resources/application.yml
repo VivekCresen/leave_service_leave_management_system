@@ -31,6 +31,9 @@ spring:
         order_updates: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+  flowable:
+    database-schema-update: true
+
   sql:
     init:
       mode: always

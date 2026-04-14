@@ -6,6 +6,8 @@ import io.swagger.v3.oas.models.info.Info;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import org.springdoc.core.models.GroupedOpenApi;
+
 @Configuration
 public class OpenApiConfig {
 
@@ -18,6 +20,6 @@ public class OpenApiConfig {
                         .version("v1")
                         .contact(new Contact()
                                 .name("Cresen Solutions")
-                                .email("support@cresensolutions.com")));
+                                .email("vivek.chavda@cresensolutions.com")));
     }
 }

@@ -7,6 +7,7 @@ import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
 import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
+import org.flowable.engine.delegate.DelegateExecution;
 import org.springframework.data.domain.Page;
 
 import java.util.List;
@@ -39,10 +40,23 @@ public interface LeaveService {
 
     void deleteLeaveType(Integer leaveTypeId);
 
-    /**
-     * Returns users that can be selected as notify recipients.
-     * For an employee: returns their manager's team members.
-     * For a manager: returns their own team members.
-     */
     List<NotifyUserResponse> getNotifyUsers(String username);
+
+    void resolveApprover(DelegateExecution execution);
+
+    void calculateReminderSchedule(DelegateExecution execution);
+
+    void sendFourDayReminderEmail(DelegateExecution execution);
+
+    void sendTwoDayReminderEmail(DelegateExecution execution);
+
+    void updateApprovedLeaveStatus(DelegateExecution execution);
+
+    void updateRejectedLeaveStatus(DelegateExecution execution);
+
+    void deductLeaveBalance(DelegateExecution execution);
+
+    void sendApprovedLeaveStatusMail(DelegateExecution execution);
+
+    void sendRejectedLeaveStatusMail(DelegateExecution execution);
 }

@@ -20,6 +20,17 @@ import com.cresensolutions.leaveservice.repository.LeaveNotifyUserRepository;
 import com.cresensolutions.leaveservice.repository.LeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveTypeRepository;
 import com.cresensolutions.leaveservice.repository.UserProfileRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.task.api.Task;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -27,16 +38,30 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
-@Service
+@Service("leaveService")
 @Transactional(readOnly = true)
 public class LeaveServiceImpl implements LeaveService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(LeaveServiceImpl.class);
+    private static final String PROCESS_DEF_KEY = "leaveApprovalProcess_1";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule());
 
     private final LeaveRepository leaveRepository;
     private final LeaveDateRepository leaveDateRepository;
@@ -45,7 +70,11 @@ public class LeaveServiceImpl implements LeaveService {
     private final EmployeeLeaveRepository employeeLeaveRepository;
     private final LeaveNotifyUserRepository leaveNotifyUserRepository;
     private final LeaveEmailService leaveEmailService;
+    private final LeaveReminderDispatchService leaveReminderDispatchService;
+    private final LeaveBalanceService leaveBalanceService;
     private final Executor leaveTaskExecutor;
+    private final RuntimeService runtimeService;
+    private final TaskService taskService;
 
     public LeaveServiceImpl(
             LeaveRepository leaveRepository,
@@ -55,7 +84,11 @@ public class LeaveServiceImpl implements LeaveService {
             EmployeeLeaveRepository employeeLeaveRepository,
             LeaveNotifyUserRepository leaveNotifyUserRepository,
             LeaveEmailService leaveEmailService,
-            @Qualifier("leaveTaskExecutor") Executor leaveTaskExecutor
+            LeaveReminderDispatchService leaveReminderDispatchService,
+            LeaveBalanceService leaveBalanceService,
+            @Qualifier("leaveTaskExecutor") Executor leaveTaskExecutor,
+            RuntimeService runtimeService,
+            TaskService taskService
     ) {
         this.leaveRepository = leaveRepository;
         this.leaveDateRepository = leaveDateRepository;
@@ -64,7 +97,11 @@ public class LeaveServiceImpl implements LeaveService {
         this.employeeLeaveRepository = employeeLeaveRepository;
         this.leaveNotifyUserRepository = leaveNotifyUserRepository;
         this.leaveEmailService = leaveEmailService;
+        this.leaveReminderDispatchService = leaveReminderDispatchService;
+        this.leaveBalanceService = leaveBalanceService;
         this.leaveTaskExecutor = leaveTaskExecutor;
+        this.runtimeService = runtimeService;
+        this.taskService = taskService;
     }
 
     @Override
@@ -110,6 +147,12 @@ public class LeaveServiceImpl implements LeaveService {
         leaveDateRepository.saveAll(dates);
 
         saveNotifyUsers(saved, user.getId(), request.notifyUserIds());
+
+        saved.appendTrailEntry("SUBMITTED", user.getUserName(), null, null,
+                "Leave request submitted by " + user.getUserName());
+        leaveRepository.save(saved);
+
+        startApprovalProcess(saved, user, request);
 
         return toLeaveResponse(saved);
     }
@@ -165,40 +208,56 @@ public class LeaveServiceImpl implements LeaveService {
             throw new IllegalArgumentException("Rejection reason is required when rejecting a leave.");
         }
 
+        Task pendingTask = findPendingApprovalTask(leaveId);
+        if (pendingTask != null) {
+            Map<String, Object> taskVars = new HashMap<>();
+            taskVars.put("actorUsername", request.actorUsername());
+            taskVars.put("status", status);
+            if (request.rejectionReason() != null) {
+                taskVars.put("rejectionReason", request.rejectionReason());
+            }
+            taskService.complete(pendingTask.getId(), taskVars);
+            LOGGER.info("[LeaveService] Completed Flowable task {} for leaveId={} with status={}", pendingTask.getId(), leaveId, status);
+           
+            return leaveRepository.findDetailedById(leaveId)
+                    .map(this::toLeaveResponse)
+                    .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        }
+
         leave.updateStatus(status, request.actorUsername(), request.rejectionReason());
         LeaveRecord saved = leaveRepository.save(leave);
+        List<LeaveDate> dates = leaveDateRepository.findByApplicationId(saved.getId());
+        String employeeName = saved.getUser() != null && saved.getUser().getFullName() != null
+                ? saved.getUser().getFullName()
+                : "Employee";
 
         if ("APPROVED".equals(status)) {
             Long userId = leave.getUserId();
             Integer leaveTypeId = leave.getLeaveTypeId();
-            List<LeaveDate> dates = leaveDateRepository.findByApplicationId(saved.getId());
             double days = dates.stream()
                     .mapToDouble(d -> d.getDayType() != null && d.getDayType().contains("HALF") ? 0.5 : 1.0)
                     .sum();
 
             CompletableFuture.runAsync(
-                    () -> deductLeaveBalance(userId, leaveTypeId, days),
+                    () -> leaveBalanceService.deductLeaveBalance(userId, leaveTypeId, days),
                     leaveTaskExecutor
             ).exceptionally(ex -> {
                 System.err.printf("[LeaveService] Failed to deduct balance for userId=%d: %s%n",
                         userId, ex.getMessage());
                 return null;
             });
-
-            List<String> notifyEmails = leaveNotifyUserRepository.findByLeaveId(saved.getId())
-                    .stream().map(LeaveNotifyUser::getUserEmail)
-                    .filter(e -> e != null && !e.isBlank()).toList();
-
-            if (!notifyEmails.isEmpty()) {
-                String employeeName = saved.getUser() != null ? saved.getUser().getFullName() : "A team member";
-                LocalDate from = dates.stream().map(LeaveDate::getLeaveDate).min(LocalDate::compareTo).orElse(null);
-                LocalDate to = dates.stream().map(LeaveDate::getLeaveDate).max(LocalDate::compareTo).orElse(null);
-                leaveEmailService.sendLeaveApprovedNotification(
-                        notifyEmails, employeeName, saved.getLeaveType(),
-                        from, to, false, null, saved.getReason()
-                );
-            }
         }
+
+        leaveEmailService.sendLeaveStatusNotification(
+                resolveStatusRecipients(saved),
+                employeeName,
+                saved.getLeaveType(),
+                dates,
+                saved.getReason(),
+                status,
+                request.actorUsername(),
+                request.rejectionReason()
+        );
 
         return toLeaveResponse(saved);
     }
@@ -312,6 +371,236 @@ public class LeaveServiceImpl implements LeaveService {
                 .toList();
     }
 
+    @Override
+    @Transactional
+    public void resolveApprover(DelegateExecution execution) {
+        Long userId = longValue(execution.getVariable("userId"));
+        String username = stringValue(execution.getVariable("username"));
+        Long leaveId = longValue(execution.getVariable("leaveId"));
+
+        UserProfile user = resolveFlowableUser(userId, username);
+        if (user == null) {
+            LOGGER.warn("[ResolveApprover] Cannot resolve user userId={} username={}", userId, username);
+            execution.setVariable("managerUsername", "admin");
+            execution.setVariable("managerEmail", "");
+            execution.setVariable("adminEmail", "");
+            return;
+        }
+
+        String managerUsername = null;
+        String managerEmail = null;
+        String createdBy = user.getCreatedBy();
+        if (createdBy != null && !createdBy.isBlank()) {
+            UserProfile manager = userProfileRepository.findByUserNameIgnoreCase(createdBy)
+                    .filter(UserProfile::isActive)
+                    .orElse(null);
+            if (manager != null) {
+                managerUsername = manager.getUserName();
+                managerEmail = manager.getEmailId();
+            }
+        }
+
+        String adminEmail = userProfileRepository.findActiveByRole("ADMIN").stream()
+                .map(UserProfile::getEmailId)
+                .filter(email -> email != null && !email.isBlank())
+                .findFirst()
+                .orElse("");
+
+        if (managerUsername == null || managerUsername.isBlank()) {
+            managerUsername = userProfileRepository.findActiveByRole("ADMIN").stream()
+                    .map(UserProfile::getUserName)
+                    .filter(value -> value != null && !value.isBlank())
+                    .findFirst()
+                    .orElse("admin");
+            managerEmail = adminEmail;
+        }
+
+        execution.setVariable("managerUsername", managerUsername);
+        execution.setVariable("managerEmail", managerEmail != null ? managerEmail : "");
+        execution.setVariable("adminEmail", adminEmail);
+        execution.setVariable("employeeName", user.getFullName() != null ? user.getFullName() : username);
+
+        final String finalManagerEmail = managerEmail;
+        final String finalManagerUsername = managerUsername;
+        if (leaveId != null) {
+            leaveRepository.findDetailedById(leaveId).ifPresent(leave -> {
+                List<LeaveDate> dates = leaveDateRepository.findByApplicationId(leaveId);
+                List<String> recipients = buildRecipients(finalManagerEmail, adminEmail);
+                if (!recipients.isEmpty()) {
+                    leaveEmailService.sendPendingApprovalReminder(
+                            recipients,
+                            user.getFullName() != null ? user.getFullName() : username,
+                            leave.getLeaveType(),
+                            dates,
+                            leave.getReason()
+                    );
+                }
+                execution.setVariable("leaveType", leave.getLeaveType());
+                leave.appendTrailEntry(
+                        "APPROVER_RESOLVED",
+                        "system",
+                        execution.getProcessInstanceId(),
+                        null,
+                        "Assigned to approver: " + finalManagerUsername
+                );
+                leaveRepository.save(leave);
+            });
+        }
+
+        LOGGER.info("[ResolveApprover] leaveId={} approver={}", leaveId, managerUsername);
+    }
+
+    @Override
+    public void calculateReminderSchedule(DelegateExecution execution) {
+        String leaveDatesJson = stringValue(execution.getVariable("leaveDates"));
+        LocalDate earliest = parseEarliestFutureDate(leaveDatesJson);
+
+        if (earliest == null) {
+            LOGGER.warn("[CalculateReminderSchedule] No future leave dates found, setting reminder times to now.");
+            Date now = new Date();
+            execution.setVariable("fourDayReminderTime", now);
+            execution.setVariable("twoDayReminderTime", now);
+            return;
+        }
+
+        ZoneId zone = ZoneId.systemDefault();
+        Date fourDayTime = toDate(earliest.minusDays(4).atTime(8, 0).atZone(zone));
+        Date twoDayTime = toDate(earliest.minusDays(2).atTime(8, 0).atZone(zone));
+
+        execution.setVariable("fourDayReminderTime", fourDayTime);
+        execution.setVariable("twoDayReminderTime", twoDayTime);
+
+        LOGGER.info("[CalculateReminderSchedule] earliestLeaveDate={}, 4dayTimer={}, 2dayTimer={}",
+                earliest, fourDayTime, twoDayTime);
+    }
+
+    @Override
+    public void sendFourDayReminderEmail(DelegateExecution execution) {
+        sendReminderEmail(execution, "4DAY");
+    }
+
+    @Override
+    public void sendTwoDayReminderEmail(DelegateExecution execution) {
+        sendReminderEmail(execution, "2DAY");
+    }
+
+    @Override
+    @Transactional
+    public void updateApprovedLeaveStatus(DelegateExecution execution) {
+        updateLeaveStatusFromFlowable(execution, "APPROVED");
+    }
+
+    @Override
+    @Transactional
+    public void updateRejectedLeaveStatus(DelegateExecution execution) {
+        updateLeaveStatusFromFlowable(execution, "REJECTED");
+    }
+
+    @Override
+    @Transactional
+    public void deductLeaveBalance(DelegateExecution execution) {
+        Long userId = longValue(execution.getVariable("userId"));
+        Integer leaveTypeId = integerValue(execution.getVariable("leaveTypeId"));
+
+        if (userId == null || leaveTypeId == null) {
+            LOGGER.warn("[DeductLeaveBalance] Missing userId or leaveTypeId, skipping.");
+            return;
+        }
+
+        String leaveUniqueName = leaveTypeRepository.findUniqueNameById(leaveTypeId);
+        if (leaveUniqueName == null || leaveUniqueName.isBlank()) {
+            LOGGER.warn("[DeductLeaveBalance] No leaveUniqueName for leaveTypeId={}, skipping.", leaveTypeId);
+            return;
+        }
+
+        Long leaveId = longValue(execution.getVariable("leaveId"));
+        if (leaveId == null) {
+            LOGGER.warn("[DeductLeaveBalance] leaveId is null, skipping.");
+            return;
+        }
+
+        List<LeaveDate> dates = leaveDateRepository.findByApplicationId(leaveId);
+        double days = dates.stream()
+                .mapToDouble(date -> date.getDayType() != null && date.getDayType().toUpperCase().contains("HALF") ? 0.5 : 1.0)
+                .sum();
+
+        if (days <= 0) {
+            LOGGER.warn("[DeductLeaveBalance] 0 days calculated for leaveId={}, skipping.", leaveId);
+            return;
+        }
+
+        int rows = employeeLeaveRepository.deductLeaveBalance(userId, leaveUniqueName, days);
+        LOGGER.info("[DeductLeaveBalance] Deducted {} days of '{}' for userId={} rows={}",
+                days, leaveUniqueName, userId, rows);
+    }
+
+    @Override
+    public void sendApprovedLeaveStatusMail(DelegateExecution execution) {
+        sendLeaveStatusMail(execution, "APPROVED");
+    }
+
+    @Override
+    public void sendRejectedLeaveStatusMail(DelegateExecution execution) {
+        sendLeaveStatusMail(execution, "REJECTED");
+    }
+
+    private void startApprovalProcess(LeaveRecord saved, UserProfile user, CreateLeaveRequest request) {
+        try {
+            String leaveDatesJson = OBJECT_MAPPER.writeValueAsString(
+                    request.leaveDates().stream()
+                            .map(d -> Map.of("date", d.date().toString(), "dayType", d.dayType() != null ? d.dayType() : "FULL"))
+                            .toList()
+            );
+            String notifyUserIdsStr = request.notifyUserIds() != null
+                    ? request.notifyUserIds().stream().map(String::valueOf).reduce("", (a, b) -> a.isEmpty() ? b : a + "," + b)
+                    : "";
+
+            Map<String, Object> vars = new HashMap<>();
+            vars.put("leaveId", saved.getId());
+            vars.put("userId", user.getId());
+            vars.put("username", user.getUserName());
+            vars.put("leaveTypeId", saved.getLeaveTypeId() != null ? saved.getLeaveTypeId().longValue() : null);
+            vars.put("leaveDates", leaveDatesJson);
+            vars.put("reason", saved.getReason());
+            vars.put("comments", saved.getComments());
+            vars.put("trail", saved.getTrail());
+            vars.put("editable", saved.isEditable());
+            vars.put("notifyUserIds", notifyUserIdsStr);
+
+            ProcessInstance instance = runtimeService.startProcessInstanceByKey(
+                    PROCESS_DEF_KEY, String.valueOf(saved.getId()), vars
+            );
+
+            // Append PROCESS_STARTED trail entry
+            saved.appendTrailEntry(
+                "PROCESS_STARTED",
+                user.getUserName(),
+                instance.getId(),
+                null,
+                "Flowable approval process started"
+            );
+            leaveRepository.save(saved);
+
+            LOGGER.info("[LeaveService] Started process {} for leaveId={}", instance.getId(), saved.getId());
+        } catch (JsonProcessingException e) {
+            LOGGER.error("[LeaveService] Failed to serialize leaveDates for leaveId={}: {}", saved.getId(), e.getMessage());
+        } catch (Exception e) {
+            LOGGER.error("[LeaveService] Failed to start approval process for leaveId={}: {}", saved.getId(), e.getMessage());
+        }
+    }
+
+    private Task findPendingApprovalTask(Long leaveId) {
+        try {
+            return taskService.createTaskQuery()
+                    .processInstanceBusinessKey(String.valueOf(leaveId))
+                    .taskDefinitionKey("task_manager_approval")
+                    .singleResult();
+        } catch (Exception e) {
+            LOGGER.warn("[LeaveService] Could not query Flowable task for leaveId={}: {}", leaveId, e.getMessage());
+            return null;
+        }
+    }
+
     private void saveNotifyUsers(LeaveRecord saved, Long ownerId, List<Long> notifyUserIds) {
         if (notifyUserIds == null || notifyUserIds.isEmpty()) return;
         List<LeaveNotifyUser> entries = notifyUserIds.stream()
@@ -324,12 +613,190 @@ public class LeaveServiceImpl implements LeaveService {
         leaveNotifyUserRepository.saveAll(entries);
     }
 
-    @Transactional
-    protected void deductLeaveBalance(Long userId, Integer leaveTypeId, double days) {
-        if (userId == null || leaveTypeId == null) return;
-        String leaveUniqueName = leaveTypeRepository.findUniqueNameById(leaveTypeId);
-        if (leaveUniqueName == null || leaveUniqueName.isBlank()) return;
-        employeeLeaveRepository.deductLeaveBalance(userId, leaveUniqueName, days);
+    private List<String> resolveStatusRecipients(LeaveRecord leave) {
+        Set<String> recipients = new LinkedHashSet<>();
+
+        if (leave.getEmailId() != null && !leave.getEmailId().isBlank()) {
+            recipients.add(leave.getEmailId().trim());
+        }
+
+        leaveNotifyUserRepository.findByLeaveId(leave.getId()).stream()
+                .map(LeaveNotifyUser::getUserEmail)
+                .filter(email -> email != null && !email.isBlank())
+                .map(String::trim)
+                .forEach(recipients::add);
+
+        return new ArrayList<>(recipients);
+    }
+
+    private void sendReminderEmail(DelegateExecution execution, String reminderType) {
+        String managerEmail = stringValue(execution.getVariable("managerEmail"));
+        String adminEmail = stringValue(execution.getVariable("adminEmail"));
+        String employeeName = stringValue(execution.getVariable("employeeName"));
+        if (employeeName == null || employeeName.isBlank()) {
+            employeeName = stringValue(execution.getVariable("username"));
+        }
+        if (employeeName == null || employeeName.isBlank()) {
+            employeeName = "Employee";
+        }
+
+        Long leaveId = longValue(execution.getVariable("leaveId"));
+        String leaveType = stringValue(execution.getVariable("leaveType"));
+        String reason = stringValue(execution.getVariable("reason"));
+
+        boolean sent = leaveReminderDispatchService.dispatchReminder(
+                leaveId,
+                reminderType,
+                managerEmail != null ? managerEmail : "",
+                adminEmail != null ? adminEmail : "",
+                employeeName,
+                leaveType,
+                reason != null ? reason : "",
+                execution.getProcessInstanceId(),
+                execution.getCurrentActivityId()
+        );
+        if (!sent) {
+            LOGGER.debug("[SendReminderEmail] Skipped {} reminder for leaveId={}", reminderType, leaveId);
+        }
+    }
+
+    private void updateLeaveStatusFromFlowable(DelegateExecution execution, String status) {
+        Long leaveId = longValue(execution.getVariable("leaveId"));
+        String actor = stringValue(execution.getVariable("actorUsername"));
+        String rejectionReason = stringValue(execution.getVariable("rejectionReason"));
+
+        if (leaveId == null) {
+            LOGGER.warn("[UpdateLeaveStatus] Missing leaveId, skipping.");
+            return;
+        }
+
+        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
+                .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+
+        leave.updateStatus(status, actor, rejectionReason);
+        String note = "REJECTED".equals(status) && rejectionReason != null
+                ? "Rejected by " + actor + ". Reason: " + rejectionReason
+                : status + " by " + actor;
+        leave.appendTrailEntry(
+                status,
+                actor != null ? actor : "system",
+                execution.getProcessInstanceId(),
+                execution.getCurrentActivityId(),
+                note
+        );
+        leaveRepository.save(leave);
+
+        if (leave.getUser() != null && leave.getUser().getFullName() != null) {
+            execution.setVariable("employeeName", leave.getUser().getFullName());
+        }
+        execution.setVariable("leaveType", leave.getLeaveType());
+
+        LOGGER.info("[UpdateLeaveStatus] leaveId={} status={} actor={}", leaveId, status, actor);
+    }
+
+    private void sendLeaveStatusMail(DelegateExecution execution, String status) {
+        Long leaveId = longValue(execution.getVariable("leaveId"));
+        String employeeName = stringValue(execution.getVariable("employeeName"));
+        if (employeeName == null || employeeName.isBlank()) {
+            employeeName = "Employee";
+        }
+        String leaveType = stringValue(execution.getVariable("leaveType"));
+        String reason = stringValue(execution.getVariable("reason"));
+        String actionBy = stringValue(execution.getVariable("actorUsername"));
+        String rejectionReason = stringValue(execution.getVariable("rejectionReason"));
+
+        List<LeaveDate> dates = leaveId != null ? leaveDateRepository.findByApplicationId(leaveId) : List.of();
+        List<String> recipients = leaveId != null
+                ? leaveRepository.findDetailedById(leaveId).map(this::resolveStatusRecipients).orElse(List.of())
+                : List.of();
+        if (recipients.isEmpty()) {
+            LOGGER.warn("[SendLeaveStatusMail] No recipients leaveId={} status={}", leaveId, status);
+            return;
+        }
+
+        LOGGER.info("[SendLeaveStatusMail] Sending {} mail leaveId={} to {} recipient(s)",
+                status, leaveId, recipients.size());
+        leaveEmailService.sendLeaveStatusNotification(
+                recipients,
+                employeeName,
+                leaveType != null ? leaveType : "",
+                dates,
+                reason != null ? reason : "",
+                status,
+                actionBy != null ? actionBy : "System",
+                rejectionReason
+        );
+    }
+
+    private UserProfile resolveFlowableUser(Long userId, String username) {
+        if (userId != null) {
+            return userProfileRepository.findById(userId).orElse(null);
+        }
+        if (username != null && !username.isBlank()) {
+            return userProfileRepository.findByUserName(username.trim()).orElse(null);
+        }
+        return null;
+    }
+
+    private List<String> buildRecipients(String managerEmail, String adminEmail) {
+        Set<String> recipients = new LinkedHashSet<>();
+        if (managerEmail != null && !managerEmail.isBlank()) {
+            recipients.add(managerEmail.trim());
+        }
+        if (adminEmail != null && !adminEmail.isBlank()) {
+            recipients.add(adminEmail.trim());
+        }
+        return new ArrayList<>(recipients);
+    }
+
+    private LocalDate parseEarliestFutureDate(String leaveDatesJson) {
+        if (leaveDatesJson == null || leaveDatesJson.isBlank()) {
+            return null;
+        }
+        LocalDate today = LocalDate.now();
+        try {
+            List<Map<String, Object>> dates = OBJECT_MAPPER.readValue(leaveDatesJson, new TypeReference<>() {});
+            return dates.stream()
+                    .map(values -> {
+                        Object date = values.get("date");
+                        if (date == null) {
+                            return null;
+                        }
+                        try {
+                            return LocalDate.parse(date.toString(), DateTimeFormatter.ISO_LOCAL_DATE);
+                        } catch (Exception ignored) {
+                            return null;
+                        }
+                    })
+                    .filter(date -> date != null && !date.isBefore(today))
+                    .min(LocalDate::compareTo)
+                    .orElse(null);
+        } catch (Exception e) {
+            LOGGER.warn("[CalculateReminderSchedule] Failed to parse leaveDates JSON: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private Date toDate(ZonedDateTime dateTime) {
+        return Date.from(dateTime.toInstant());
+    }
+
+    private Long longValue(Object value) {
+        if (value instanceof Long longValue) return longValue;
+        if (value instanceof Number number) return number.longValue();
+        if (value instanceof String stringValue && !stringValue.isBlank()) return Long.parseLong(stringValue);
+        return null;
+    }
+
+    private Integer integerValue(Object value) {
+        if (value instanceof Integer integerValue) return integerValue;
+        if (value instanceof Number number) return number.intValue();
+        if (value instanceof String stringValue && !stringValue.isBlank()) return Integer.parseInt(stringValue);
+        return null;
+    }
+
+    private String stringValue(Object value) {
+        return value != null ? value.toString() : null;
     }
 
     private UserProfile resolveUser(CreateLeaveRequest request) {

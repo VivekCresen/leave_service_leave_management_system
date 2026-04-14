@@ -23,24 +23,25 @@ spring:
     show-sql: false
     properties:
       hibernate:
+        default_schema: public
         default_batch_fetch_size: 50
         jdbc:
           fetch_size: 50
           batch_size: 25
         order_inserts: true
         order_updates: true
-        dialect: org.hibernate.dialect.PostgreSQLDialect
 
   flowable:
     database-schema-update: true
-
-  sql:
-    init:
-      mode: always
+    async-executor-activate: true
+    process-definition-location-prefix: classpath*:processes/
+    process-definition-location-suffixes:
+      - "**.bpmn20.xml"
+      - "**.bpmn"
 
   mail:
-    host: smtp.gmail.com
-    port: 587
+    host: ${MAIL_HOST:smtp.gmail.com}
+    port: ${MAIL_PORT:587}
     username: ${MAIL_USERNAME:viveksinhchavda@gmail.com}
     password: ${MAIL_PASSWORD:drauzuufuzlddfwy}
     properties:
@@ -50,13 +51,22 @@ spring:
           starttls:
             enable: true
 
+  sql:
+    init:
+      mode: always
+
 server:
   port: 8082
 
 app:
   mail:
-    from: ${APP_MAIL_FROM:${MAIL_USERNAME:viveksinhchavda@gmail.com}}
-    logo-path: ${APP_MAIL_LOGO_PATH:/home/vivek/Documents/CresenProject/front-end/frontend_leave_management_system/public/assets/logo-6.png}
+    from: ${MAIL_FROM:viveksinhchavda@gmail.com}
+    logo-path: ${MAIL_LOGO_PATH:}
+    batch-size: ${MAIL_BATCH_SIZE:25}
+  leave-reminder:
+    cron: ${APP_LEAVE_REMINDER_CRON:0 */1 * * * *}
+    cron-4day: ${APP_LEAVE_REMINDER_CRON_4DAY:0 0 8 * * *}
+    cron-2day: ${APP_LEAVE_REMINDER_CRON_2DAY:0 1 8 * * *}
 
 eureka:
   client:
@@ -76,3 +86,9 @@ springdoc:
     path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+    urls:
+      - name: leave-service
+        url: /v3/api-docs
+      - name: flowable-api
+        url: /flowable-swagger-process.yaml
+  packages-to-scan: com.cresensolutions.leaveservice

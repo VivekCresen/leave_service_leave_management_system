@@ -21,8 +21,7 @@ public record CreateLeaveTypeRequest(
         @Min(value = 1, message = "Max days must be at least 1")
         @Max(value = 365, message = "Max days must be at most 365")
         Integer maxDays,
-
-        // null = no restriction, "MALE" or "FEMALE"
+        
         @Pattern(regexp = "MALE|FEMALE", message = "Gender restriction must be MALE or FEMALE")
         String genderRestriction
 ) {

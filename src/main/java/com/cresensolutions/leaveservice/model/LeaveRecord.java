@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.model;
 
+import com.cresensolutions.leaveservice.config.DbSchemas;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -19,16 +20,19 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 @Entity
 @Table(
+        schema = DbSchemas.LEAVE,
         name = "leave_application",
         indexes = {
                 @Index(name = "idx_leave_application_user_id", columnList = "user_id"),
-                @Index(name = "idx_leave_type_reference", columnList = "leave_type_id")
+                @Index(name = "idx_leave_application_leave_type_id", columnList = "leave_type_id")
         }
 )
 public class LeaveRecord {
@@ -47,8 +51,8 @@ public class LeaveRecord {
     private String reason;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "trail")
-    private String trail;
+    @Column(name = "trail", columnDefinition = "jsonb")
+    private String trail = "[]";
 
     @Column(name = "created_at")
     private LocalDate createdAt;
@@ -70,6 +74,9 @@ public class LeaveRecord {
 
     @Column(name = "rejection_reason")
     private String rejectionReason;
+
+   @Column(name = "reminder_sent_flags")
+    private String reminderSentFlags;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", foreignKey = @ForeignKey(name = "fk_leave_app_user"))
@@ -133,7 +140,25 @@ public class LeaveRecord {
     public String getStatus() { return status; }
     public String getApprovedBy() { return approvedBy; }
     public String getRejectionReason() { return rejectionReason; }
+    public String getReminderSentFlags() { return reminderSentFlags; }
     public UserProfile getUser() { return user; }
+
+    public boolean isReminderSent(int daysBefore) {
+        if (reminderSentFlags == null || reminderSentFlags.isBlank()) return false;
+        for (String flag : reminderSentFlags.split(",")) {
+            if (flag.trim().equals(String.valueOf(daysBefore))) return true;
+        }
+        return false;
+    }
+
+    public void markReminderSent(int daysBefore) {
+        String flag = String.valueOf(daysBefore);
+        if (reminderSentFlags == null || reminderSentFlags.isBlank()) {
+            reminderSentFlags = flag;
+        } else if (!isReminderSent(daysBefore)) {
+            reminderSentFlags = reminderSentFlags + "," + flag;
+        }
+    }
     public Long getUserId() { return user == null ? null : user.getId(); }
 
     public List<LeaveDate> getLeaveDates() {
@@ -146,6 +171,43 @@ public class LeaveRecord {
 
     public void clearLeaveDates() {
         leaveDates.clear();
+    }
+
+    /**
+     * Appends a Flowable audit event to the trail JSONB array.
+     *
+     * @param event             e.g. "SUBMITTED", "PROCESS_STARTED", "APPROVER_RESOLVED",
+     *                          "REMINDER_SENT", "APPROVED", "REJECTED"
+     * @param actor             username or "system"
+     * @param processInstanceId Flowable process instance ID (may be null)
+     * @param taskId            Flowable task ID (may be null)
+     * @param note              optional free-text detail
+     */
+    public void appendTrailEntry(String event, String actor,
+                                 String processInstanceId, String taskId, String note) {
+        String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        String safeActor = actor != null ? actor.replace("\"", "'") : "system";
+        String safeNote  = note  != null ? note.replace("\"", "'")  : "";
+        String safePid   = processInstanceId != null ? processInstanceId : "";
+        String safeTid   = taskId != null ? taskId : "";
+
+        String entry = String.format(
+            "{\"event\":\"%s\",\"actor\":\"%s\",\"timestamp\":\"%s\"," +
+            "\"processInstanceId\":\"%s\",\"taskId\":\"%s\",\"note\":\"%s\"}",
+            event, safeActor, timestamp, safePid, safeTid, safeNote
+        );
+
+        if (this.trail == null || this.trail.isBlank() || this.trail.equals("null")) {
+            this.trail = "[" + entry + "]";
+        } else {
+            // Append to existing array: remove trailing ']', add entry, close
+            String trimmed = this.trail.trim();
+            if (trimmed.equals("[]")) {
+                this.trail = "[" + entry + "]";
+            } else {
+                this.trail = trimmed.substring(0, trimmed.length() - 1) + "," + entry + "]";
+            }
+        }
     }
 
     public void updateStatus(String status, String actorUsername, String rejectionReason) {

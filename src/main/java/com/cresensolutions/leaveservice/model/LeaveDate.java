@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.model;
 
+import com.cresensolutions.leaveservice.config.DbSchemas;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -17,6 +18,7 @@ import java.time.LocalDate;
 
 @Entity
 @Table(
+        schema = DbSchemas.LEAVE,
         name = "leave_dates",
         indexes = {
                 @Index(name = "idx_leave_dates_application_id", columnList = "leave_application_id")

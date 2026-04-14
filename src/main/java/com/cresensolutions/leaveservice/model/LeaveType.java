@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.model;
 
+import com.cresensolutions.leaveservice.config.DbSchemas;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -19,6 +20,7 @@ import java.util.Set;
 
 @Entity
 @Table(
+        schema = DbSchemas.LEAVE,
         name = "leave_types",
         indexes = {
                 @Index(name = "idx_leave_types_name", columnList = "leave_name"),
@@ -44,7 +46,7 @@ public class LeaveType {
     private Integer maxDays;
 
     @Column(name = "gender_restriction")
-    private String genderRestriction; // null = no restriction, "MALE", "FEMALE"
+    private String genderRestriction; 
 
     @Column(name = "created_at")
     private Instant createdAt;

@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.model;
 
+import com.cresensolutions.leaveservice.config.DbSchemas;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -15,6 +16,7 @@ import jakarta.persistence.UniqueConstraint;
 
 @Entity
 @Table(
+        schema = DbSchemas.LEAVE,
         name = "leave_notify_users",
         uniqueConstraints = {
                 @UniqueConstraint(

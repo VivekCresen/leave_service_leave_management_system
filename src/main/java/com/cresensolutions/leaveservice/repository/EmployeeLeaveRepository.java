@@ -10,12 +10,12 @@ import java.util.Optional;
 
 public interface EmployeeLeaveRepository extends JpaRepository<EmployeeLeave, Long> {
 
-    @Query(value = "SELECT * FROM employee_leave WHERE user_id = :userId LIMIT 1", nativeQuery = true)
+    @Query(value = "SELECT * FROM leave_schema.employee_leave WHERE user_id = :userId LIMIT 1", nativeQuery = true)
     Optional<EmployeeLeave> findByUserId(@Param("userId") Long userId);
-   
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
-            UPDATE employee_leave
+            UPDATE leave_schema.employee_leave
             SET leaves = jsonb_set(
                 leaves::jsonb,
                 ARRAY[:leaveKey],
@@ -29,7 +29,7 @@ public interface EmployeeLeaveRepository extends JpaRepository<EmployeeLeave, Lo
 
     @Query(value = """
             SELECT COALESCE((leaves::jsonb->>:leaveKey)::numeric, 0)
-            FROM employee_leave
+            FROM leave_schema.employee_leave
             WHERE user_id = :userId
             """, nativeQuery = true)
     Double getRemainingBalance(@Param("userId") Long userId,

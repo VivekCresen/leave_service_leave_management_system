@@ -5,11 +5,11 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
 import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
+import com.cresensolutions.leaveservice.dto.PagedResponse;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
 import com.cresensolutions.leaveservice.service.LeaveService;
 import jakarta.validation.Valid;
-import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -39,12 +39,17 @@ public class LeaveController {
         return leaveService.createLeave(request);
     }
 
+    @PostMapping("/applications")
+    public LeaveResponse submitLeaveApplication(@Valid @RequestBody CreateLeaveRequest request) {
+        return leaveService.createLeave(request);
+    }
+
     @GetMapping
-    public Page<LeaveResponse> getAllLeaves(
+    public PagedResponse<LeaveResponse> getAllLeaves(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size
     ) {
-        return leaveService.getAllLeaves(page, size);
+        return PagedResponse.from(leaveService.getAllLeaves(page, size));
     }
 
     @GetMapping("/{leaveId}")
@@ -53,30 +58,39 @@ public class LeaveController {
     }
 
     @GetMapping("/user/{userId}")
-    public Page<LeaveResponse> getLeavesByUserId(
+    public PagedResponse<LeaveResponse> getLeavesByUserId(
             @PathVariable Long userId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size
     ) {
-        return leaveService.getLeavesByUserId(userId, page, size);
+        return PagedResponse.from(leaveService.getLeavesByUserId(userId, page, size));
     }
 
     @GetMapping("/by-username/{username}")
-    public Page<LeaveResponse> getLeavesByUsername(
+    public PagedResponse<LeaveResponse> getLeavesByUsername(
             @PathVariable String username,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "200") int size
     ) {
-        return leaveService.getLeavesByUsername(username, page, size);
+        return PagedResponse.from(leaveService.getLeavesByUsername(username, page, size));
+    }
+
+    @GetMapping("/history/{username}")
+    public PagedResponse<LeaveResponse> getLeaveHistoryGrid(
+            @PathVariable String username,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "200") int size
+    ) {
+        return PagedResponse.from(leaveService.getLeavesByUsername(username, page, size));
     }
 
     @GetMapping("/by-manager/{managerUsername}")
-    public Page<LeaveResponse> getLeavesByManagerUsername(
+    public PagedResponse<LeaveResponse> getLeavesByManagerUsername(
             @PathVariable String managerUsername,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "200") int size
     ) {
-        return leaveService.getLeavesByManagerUsername(managerUsername, page, size);
+        return PagedResponse.from(leaveService.getLeavesByManagerUsername(managerUsername, page, size));
     }
 
     @PutMapping("/{leaveId}/status")
@@ -123,11 +137,7 @@ public class LeaveController {
     public void deleteLeaveType(@PathVariable Integer leaveTypeId) {
         leaveService.deleteLeaveType(leaveTypeId);
     }
-
-    /**
-     * Returns the list of users that the requesting user can notify when submitting a leave.
-     * Employees see their teammates; managers see their team members.
-     */
+    
     @GetMapping("/notify-users")
     public List<NotifyUserResponse> getNotifyUsers(@RequestParam String username) {
         return leaveService.getNotifyUsers(username);

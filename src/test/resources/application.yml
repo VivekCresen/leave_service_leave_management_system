@@ -1,21 +1,32 @@
 spring:
-  config:
-    import: ""
-  cloud:
-    config:
-      enabled: false
-      import-check:
-        enabled: false
+  application:
+    name: leave-service-test
   datasource:
-    url: jdbc:h2:mem:leave_service_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;INIT=CREATE SCHEMA IF NOT EXISTS core\\;SET SCHEMA core
     driver-class-name: org.h2.Driver
     username: sa
-    password: ""
+    password:
   jpa:
     hibernate:
       ddl-auto: create-drop
-    open-in-view: false
-
+    database-platform: org.hibernate.dialect.H2Dialect
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: core
+  sql:
+    init:
+      mode: never
+  cloud:
+    config:
+      enabled: false
+  config:
+    import: optional:configserver:
 eureka:
   client:
     enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+app:
+  leave-reminder:
+    cron: "0 0 0 1 1 ?"

@@ -9,11 +9,11 @@ import java.util.List;
 
 public interface LeaveTypeRepository extends JpaRepository<LeaveType, Integer> {
 
-    @Query(value = "SELECT * FROM leave_types ORDER BY id ASC", nativeQuery = true)
+    @Query(value = "SELECT * FROM leave_schema.leave_types ORDER BY id ASC", nativeQuery = true)
     List<LeaveType> findAllOrderedById();
 
-   @Query(value = """
-            SELECT * FROM leave_types
+    @Query(value = """
+            SELECT * FROM leave_schema.leave_types
             WHERE LOWER(leave_name) = LOWER(:leaveName)
                OR LOWER(leave_unique_name) = LOWER(:leaveUniqueName)
             """, nativeQuery = true)
@@ -21,7 +21,7 @@ public interface LeaveTypeRepository extends JpaRepository<LeaveType, Integer> {
                                   @Param("leaveUniqueName") String leaveUniqueName);
 
     @Query(value = """
-            SELECT * FROM leave_types
+            SELECT * FROM leave_schema.leave_types
             WHERE id <> :leaveTypeId
               AND (LOWER(leave_name) = LOWER(:leaveName)
                 OR LOWER(leave_unique_name) = LOWER(:leaveUniqueName))
@@ -30,6 +30,6 @@ public interface LeaveTypeRepository extends JpaRepository<LeaveType, Integer> {
                                             @Param("leaveName") String leaveName,
                                             @Param("leaveUniqueName") String leaveUniqueName);
 
-    @Query(value = "SELECT leave_unique_name FROM leave_types WHERE id = :id", nativeQuery = true)
+    @Query(value = "SELECT leave_unique_name FROM leave_schema.leave_types WHERE id = :id", nativeQuery = true)
     String findUniqueNameById(@Param("id") Integer id);
 }

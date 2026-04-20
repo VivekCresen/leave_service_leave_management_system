@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.model;
 
+import com.cresensolutions.leaveservice.common.LeaveConstants;
 import com.cresensolutions.leaveservice.config.DbSchemas;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
@@ -67,10 +68,13 @@ public class LeaveRecord {
     private boolean editable = true;
 
     @Column(name = "status")
-    private String status = "PENDING";
+    private String status = LeaveConstants.STATUS_PENDING;
 
     @Column(name = "approved_by")
     private String approvedBy;
+
+    @Column(name = "manager_approved_by")
+    private String managerApprovedBy;
 
     @Column(name = "rejection_reason")
     private String rejectionReason;
@@ -139,6 +143,7 @@ public class LeaveRecord {
     public boolean isEditable() { return editable; }
     public String getStatus() { return status; }
     public String getApprovedBy() { return approvedBy; }
+    public String getManagerApprovedBy() { return managerApprovedBy; }
     public String getRejectionReason() { return rejectionReason; }
     public String getReminderSentFlags() { return reminderSentFlags; }
     public UserProfile getUser() { return user; }
@@ -173,20 +178,11 @@ public class LeaveRecord {
         leaveDates.clear();
     }
 
-    /**
-     * Appends a Flowable audit event to the trail JSONB array.
-     *
-     * @param event             e.g. "SUBMITTED", "PROCESS_STARTED", "APPROVER_RESOLVED",
-     *                          "REMINDER_SENT", "APPROVED", "REJECTED"
-     * @param actor             username or "system"
-     * @param processInstanceId Flowable process instance ID (may be null)
-     * @param taskId            Flowable task ID (may be null)
-     * @param note              optional free-text detail
-     */
+
     public void appendTrailEntry(String event, String actor,
                                  String processInstanceId, String taskId, String note) {
         String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        String safeActor = actor != null ? actor.replace("\"", "'") : "system";
+        String safeActor = actor != null ? actor.replace("\"", "'") : LeaveConstants.SYSTEM_ACTOR;
         String safeNote  = note  != null ? note.replace("\"", "'")  : "";
         String safePid   = processInstanceId != null ? processInstanceId : "";
         String safeTid   = taskId != null ? taskId : "";
@@ -200,7 +196,6 @@ public class LeaveRecord {
         if (this.trail == null || this.trail.isBlank() || this.trail.equals("null")) {
             this.trail = "[" + entry + "]";
         } else {
-            // Append to existing array: remove trailing ']', add entry, close
             String trimmed = this.trail.trim();
             if (trimmed.equals("[]")) {
                 this.trail = "[" + entry + "]";
@@ -214,6 +209,12 @@ public class LeaveRecord {
         this.status = status;
         this.approvedBy = actorUsername;
         this.rejectionReason = rejectionReason;
+    }
+
+    public void setManagerApproved(String managerUsername) {
+        this.status = LeaveConstants.STATUS_MANAGER_APPROVED;
+        this.managerApprovedBy = managerUsername;
+        this.editable = false;
     }
 
     public void updateDetails(LeaveType leaveTypeReference, String reason, String comments, String trail) {

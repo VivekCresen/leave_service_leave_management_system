@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.model;
 
+import com.cresensolutions.leaveservice.common.LeaveConstants;
 import com.cresensolutions.leaveservice.config.DbSchemas;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -42,14 +43,14 @@ public class LeaveDate {
     private LocalDate leaveDate;
 
     @Column(name = "day_type", nullable = false)
-    private String dayType = "FULL";
+    private String dayType = LeaveConstants.DAY_TYPE_FULL;
 
     protected LeaveDate() {}
 
     public LeaveDate(LeaveRecord leaveApplication, LocalDate leaveDate, String dayType) {
         this.leaveApplication = leaveApplication;
         this.leaveDate = leaveDate;
-        this.dayType = dayType != null ? dayType.toUpperCase() : "FULL";
+        this.dayType = dayType != null ? dayType.toUpperCase() : LeaveConstants.DAY_TYPE_FULL;
     }
 
     public Long getId() { return id; }

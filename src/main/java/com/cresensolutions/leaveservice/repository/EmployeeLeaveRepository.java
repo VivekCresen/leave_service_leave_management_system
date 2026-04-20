@@ -17,10 +17,10 @@ public interface EmployeeLeaveRepository extends JpaRepository<EmployeeLeave, Lo
     @Query(value = """
             UPDATE leave_schema.employee_leave
             SET leaves = jsonb_set(
-                leaves::jsonb,
+                leaves,
                 ARRAY[:leaveKey],
-                to_jsonb(GREATEST(0, COALESCE((leaves::jsonb->>:leaveKey)::numeric, 0) - :days))
-            )::text
+                to_jsonb(GREATEST(0, COALESCE((leaves->>:leaveKey)::numeric, 0) - :days))
+            )
             WHERE user_id = :userId
             """, nativeQuery = true)
     int deductLeaveBalance(@Param("userId") Long userId,

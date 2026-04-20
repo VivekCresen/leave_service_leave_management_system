@@ -3,7 +3,6 @@ spring:
     name: leave-service
   config:
     import: optional:configserver:http://localhost:8888
-
   datasource:
     url: jdbc:postgresql://localhost:5432/leave_management_system
     username: postgres
@@ -15,7 +14,6 @@ spring:
       connection-timeout: 20000
       max-lifetime: 1800000
       pool-name: LeaveHikariPool
-
   jpa:
     hibernate:
       ddl-auto: update
@@ -31,42 +29,17 @@ spring:
         order_inserts: true
         order_updates: true
 
-  flowable:
-    database-schema-update: true
-    async-executor-activate: true
-    process-definition-location-prefix: classpath*:processes/
-    process-definition-location-suffixes:
-      - "**.bpmn20.xml"
-      - "**.bpmn"
-
-  mail:
-    host: ${MAIL_HOST:smtp.gmail.com}
-    port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:viveksinhchavda@gmail.com}
-    password: ${MAIL_PASSWORD:drauzuufuzlddfwy}
-    properties:
-      mail:
-        smtp:
-          auth: true
-          starttls:
-            enable: true
-
-  sql:
-    init:
-      mode: always
-
 server:
   port: 8082
 
-app:
-  mail:
-    from: ${MAIL_FROM:viveksinhchavda@gmail.com}
-    logo-path: ${MAIL_LOGO_PATH:}
-    batch-size: ${MAIL_BATCH_SIZE:25}
-  leave-reminder:
-    cron: ${APP_LEAVE_REMINDER_CRON:0 */1 * * * *}
-    cron-4day: ${APP_LEAVE_REMINDER_CRON_4DAY:0 0 8 * * *}
-    cron-2day: ${APP_LEAVE_REMINDER_CRON_2DAY:0 1 8 * * *}
+flowable:
+  database-schema-update: true
+  async-executor-activate: true
+  async-executor-lock-owner: ${spring.application.name}-${server.port:8082}
+  process-definition-location-prefix: classpath:/processes/
+  process-definition-location-suffixes:
+    - "**.bpmn20.xml"
+    - "**.bpmn"
 
 eureka:
   client:
@@ -74,12 +47,16 @@ eureka:
       defaultZone: http://localhost:8761/eureka/
   instance:
     prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port:8082}
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+  health:
+    mail:
+      enabled: false
 
 springdoc:
   api-docs:
@@ -92,3 +69,6 @@ springdoc:
       - name: flowable-api
         url: /flowable-swagger-process.yaml
   packages-to-scan: com.cresensolutions.leaveservice
+
+app:
+  login-url: http://localhost:8081/login

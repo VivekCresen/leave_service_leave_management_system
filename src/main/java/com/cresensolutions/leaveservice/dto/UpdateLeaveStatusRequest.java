@@ -8,10 +8,8 @@ public record UpdateLeaveStatusRequest(
         String actorUsername,
 
         @NotBlank(message = "Status is required")
-        @Pattern(regexp = "APPROVED|REJECTED", message = "Status must be APPROVED or REJECTED")
+        @Pattern(regexp = "APPROVED|REJECTED|MANAGER_APPROVED", message = "Status must be APPROVED, REJECTED, or MANAGER_APPROVED")
         String status,
-
-        // Required only when status is REJECTED
         String rejectionReason
 ) {
 }

@@ -1,5 +1,8 @@
 package com.cresensolutions.leaveservice.service;
 
+import com.cresensolutions.leaveservice.dto.PartialLeaveStatusRequest;
+import com.cresensolutions.leaveservice.dto.AppendAuditTrailRequest;
+import com.cresensolutions.leaveservice.dto.AuditTrailEntryDto;
 import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
@@ -28,6 +31,8 @@ public interface LeaveService {
 
     LeaveResponse updateLeaveStatus(Long leaveId, UpdateLeaveStatusRequest request);
 
+    LeaveResponse applyPartialStatus(Long leaveId, PartialLeaveStatusRequest request);
+
     LeaveResponse updateLeave(Long leaveId, UpdateLeaveRequest request);
 
     void deletePendingLeave(Long leaveId);
@@ -42,21 +47,23 @@ public interface LeaveService {
 
     List<NotifyUserResponse> getNotifyUsers(String username);
 
+    List<String> getBookedDates(String username);
+
+    List<AuditTrailEntryDto> getAuditTrail(Long leaveId);
+
+    LeaveResponse appendAuditTrailEntry(Long leaveId, AppendAuditTrailRequest request);
+
     void resolveApprover(DelegateExecution execution);
 
     void calculateReminderSchedule(DelegateExecution execution);
 
-    void sendFourDayReminderEmail(DelegateExecution execution);
+    void sendReminderEmail(DelegateExecution execution);
 
-    void sendTwoDayReminderEmail(DelegateExecution execution);
+    void updateLeaveStatusFromFlowable(DelegateExecution execution);
 
-    void updateApprovedLeaveStatus(DelegateExecution execution);
-
-    void updateRejectedLeaveStatus(DelegateExecution execution);
+    void notifyAdminForFinalApproval(DelegateExecution execution);
 
     void deductLeaveBalance(DelegateExecution execution);
 
-    void sendApprovedLeaveStatusMail(DelegateExecution execution);
-
-    void sendRejectedLeaveStatusMail(DelegateExecution execution);
+    void sendLeaveStatusMail(DelegateExecution execution);
 }

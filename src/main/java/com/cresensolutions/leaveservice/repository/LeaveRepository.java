@@ -8,8 +8,9 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.Optional;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
 
@@ -83,6 +84,17 @@ public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
             """,
            nativeQuery = true)
     Page<LeaveRecord> findByManagerUsernamePaged(@Param("managerUsername") String managerUsername, Pageable pageable);
+
+    @Query(value = """
+            SELECT CAST(ld.leave_date AS varchar) FROM leave_schema.leave_dates ld
+            INNER JOIN leave_schema.leave_application l ON ld.leave_application_id = l.id
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE LOWER(u.user_name) = LOWER(:username)
+              AND UPPER(COALESCE(l.status, 'PENDING')) IN ('APPROVED', 'PENDING')
+              AND ld.leave_date >= CURRENT_DATE
+            ORDER BY ld.leave_date ASC
+            """, nativeQuery = true)
+    List<String> findBookedDatesByUsername(@Param("username") String username);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "UPDATE leave_schema.leave_application SET leave_type_id = NULL WHERE leave_type_id = :leaveTypeId",

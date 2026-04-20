@@ -17,6 +17,7 @@ public record LeaveResponse(
         boolean editable,
         String status,
         String approvedBy,
+        String managerApprovedBy,
         String rejectionReason,
         LocalDate createdAt,
         LocalDate updatedAt,

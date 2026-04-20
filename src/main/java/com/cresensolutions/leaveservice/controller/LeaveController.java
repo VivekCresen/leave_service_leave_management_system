@@ -1,5 +1,6 @@
 package com.cresensolutions.leaveservice.controller;
 
+import com.cresensolutions.leaveservice.dto.PartialLeaveStatusRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
@@ -101,6 +102,14 @@ public class LeaveController {
         return leaveService.updateLeaveStatus(leaveId, request);
     }
 
+    @PutMapping("/{leaveId}/partial-status")
+    public LeaveResponse applyPartialStatus(
+            @PathVariable Long leaveId,
+            @Valid @RequestBody PartialLeaveStatusRequest request
+    ) {
+        return leaveService.applyPartialStatus(leaveId, request);
+    }
+
     @PutMapping("/{leaveId}")
     public LeaveResponse updateLeave(
             @PathVariable Long leaveId,
@@ -141,5 +150,10 @@ public class LeaveController {
     @GetMapping("/notify-users")
     public List<NotifyUserResponse> getNotifyUsers(@RequestParam String username) {
         return leaveService.getNotifyUsers(username);
+    }
+
+    @GetMapping("/booked-dates/{username}")
+    public List<String> getBookedDates(@PathVariable String username) {
+        return leaveService.getBookedDates(username);
     }
 }

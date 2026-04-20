@@ -1,364 +1,624 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:flowable="http://flowable.org/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC" xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI" typeLanguage="http://www.w3.org/2001/XMLSchema" expressionLanguage="http://www.w3.org/1999/XPath" targetNamespace="http://www.cresensolutions.com/leave-approval-process" exporter="Flowable Open Source Modeler" exporterVersion="6.8.0">
+<definitions
+  xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:flowable="http://flowable.org/bpmn"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
+  targetNamespace="http://www.cresensolutions.com/leave-approval-process"
+  exporter="Flowable Open Source Modeler"
+  exporterVersion="6.8.0">
+
   <process id="leaveApprovalProcess_1" name="Leave Approval Process" isExecutable="true">
-    <documentation>Leave Approval Process with daily reminder scheduler.
-      While manager has not approved or rejected, a non-interrupting boundary timer
-      fires every 24h, calculates days until leave, and sends reminder email if needed.</documentation>
-    <startEvent id="start_leave_request" name="Leave Request
-Submitted" flowable:formFieldValidation="true">
+    <documentation>
+      Two-level leave approval: Employee submits → Manager approves/rejects →
+      If manager approves, Admin gives final approval/rejection.
+      4-day and 2-day reminder timers fire on both the manager task and the admin task.
+      Emails sent at every stage: submission, manager decision, admin decision.
+    </documentation>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         START
+    ═══════════════════════════════════════════════════════════ -->
+    <startEvent id="start_leave_request" name="Leave Request Submitted" flowable:formFieldValidation="true">
       <extensionElements>
-        <flowable:formProperty id="userId" type="long"></flowable:formProperty>
-        <flowable:formProperty id="username" type="string"></flowable:formProperty>
-        <flowable:formProperty id="leaveTypeId" type="long" required="true"></flowable:formProperty>
-        <flowable:formProperty id="leaveDates" type="string" required="true"></flowable:formProperty>
-        <flowable:formProperty id="reason" type="string" required="true"></flowable:formProperty>
-        <flowable:formProperty id="comments" type="string"></flowable:formProperty>
-        <flowable:formProperty id="trail" type="string"></flowable:formProperty>
-        <flowable:formProperty id="editable" type="boolean" default="true"></flowable:formProperty>
-        <flowable:formProperty id="notifyUserIds" type="string"></flowable:formProperty>
+        <flowable:formProperty id="userId"       type="long"    xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="username"     type="string"  xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="leaveTypeId"  type="long"    required="true" xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="leaveDates"   type="string"  required="true" xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="reason"       type="string"  required="true" xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="comments"     type="string"  xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="trail"        type="string"  xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="editable"     type="boolean" default="true"  xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="notifyUserIds" type="string" xmlns:flowable="http://flowable.org/bpmn"/>
       </extensionElements>
     </startEvent>
-    <serviceTask id="service_resolve_approver" name="Send Email to
-Admin/Manager" flowable:expression="${leaveService.resolveApprover(execution)}">
-      <documentation>Resolves approver (manager via createdBy, fallback to ADMIN role).
-        Sends initial leave-request notification email.
-        Sets: managerUsername, managerEmail, adminEmail.</documentation>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 1 — Resolve approver + send initial email to manager
+    ═══════════════════════════════════════════════════════════ -->
+    <serviceTask id="service_resolve_approver" name="Resolve Approver&#10;+ Notify Manager"
+      flowable:expression="${leaveService.resolveApprover(execution)}">
+      <documentation>
+        Resolves manager (via createdBy) or falls back to ADMIN.
+        Sends pending-approval email to manager/admin.
+        Sets: managerUsername, managerEmail, adminEmail, employeeName, leaveType.
+      </documentation>
+    </serviceTask>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 2 — Calculate reminder schedule (shared by both tasks)
+    ═══════════════════════════════════════════════════════════ -->
+    <serviceTask id="service_calculate_reminder_schedule" name="Calculate Reminder&#10;Schedule"
+      flowable:expression="${leaveService.calculateReminderSchedule(execution)}">
+      <documentation>
+        Finds earliest leave date, sets:
+          fourDayReminderTime = earliestDate - 4 days at 08:00
+          twoDayReminderTime  = earliestDate - 2 days at 08:00
+        Used by boundary timers on both manager and admin tasks.
+      </documentation>
       <extensionElements>
-        <flowable:field name="userId">
-          <flowable:expression><![CDATA[${userId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="username">
-          <flowable:expression><![CDATA[${username}]]></flowable:expression>
+        <flowable:field name="leaveDates" xmlns:flowable="http://flowable.org/bpmn">
+          <flowable:expression>${leaveDates}</flowable:expression>
         </flowable:field>
       </extensionElements>
     </serviceTask>
-    <userTask id="task_manager_approval" name="Manager or Admin
-Approval" flowable:assignee="${managerUsername}" flowable:formFieldValidation="true">
-      <documentation>Waits for Manager or Admin to APPROVE or REJECT.
-        While this task is pending, the boundary timer fires every 24h
-        to check if a reminder email should be sent.</documentation>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 3 — Manager approval user task + reminder timers
+    ═══════════════════════════════════════════════════════════ -->
+    <userTask id="task_manager_approval" name="Manager Approval"
+      flowable:assignee="${managerUsername}" flowable:formFieldValidation="true">
+      <documentation>
+        Waits for Manager (or Admin fallback) to APPROVE or REJECT.
+        Non-interrupting boundary timers send 4-day and 2-day reminders.
+      </documentation>
       <extensionElements>
-        <flowable:formProperty id="actorUsername" type="string" required="true"></flowable:formProperty>
-        <flowable:formProperty id="status" type="enum" required="true">
-          <flowable:value id="APPROVED" name="APPROVED"></flowable:value>
-          <flowable:value id="REJECTED" name="REJECTED"></flowable:value>
+        <flowable:formProperty id="actorUsername"   type="string" required="true" xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="status" type="enum" required="true" xmlns:flowable="http://flowable.org/bpmn">
+          <flowable:value id="APPROVED" name="APPROVED"/>
+          <flowable:value id="REJECTED" name="REJECTED"/>
         </flowable:formProperty>
-        <flowable:formProperty id="rejectionReason" type="string"></flowable:formProperty>
-        <modeler:initiator-can-complete xmlns:modeler="http://flowable.org/modeler"><![CDATA[false]]></modeler:initiator-can-complete>
+        <flowable:formProperty id="rejectionReason" type="string" xmlns:flowable="http://flowable.org/bpmn"/>
+        <modeler:initiator-can-complete xmlns:modeler="http://flowable.org/modeler">false</modeler:initiator-can-complete>
       </extensionElements>
     </userTask>
-    <boundaryEvent id="timer_4day_reminder" name="4-Day Reminder
-Timer" attachedToRef="task_manager_approval" cancelActivity="false">
-      <documentation>Non-interrupting timer. Fires once when 4 days remain before
-        the earliest leave date. Sends a 4-DAY reminder to Admin/Manager.
-        Uses ${fourDayReminderTime} — set by CalculateReminderScheduleDelegate.</documentation>
-      <timerEventDefinition>
-        <timeDate>${fourDayReminderTime}</timeDate>
-      </timerEventDefinition>
+
+    <!-- Manager task: 4-day reminder timer (non-interrupting) -->
+    <boundaryEvent id="timer_mgr_4day" name="Manager 4-Day Reminder"
+      attachedToRef="task_manager_approval" cancelActivity="false">
+      <timerEventDefinition><timeDate>${fourDayReminderTime}</timeDate></timerEventDefinition>
     </boundaryEvent>
-    <boundaryEvent id="timer_2day_reminder" name="2-Day Reminder
-Timer" attachedToRef="task_manager_approval" cancelActivity="false">
-      <documentation>Non-interrupting timer. Fires once when 2 days remain before
-        the earliest leave date. Sends a 2-DAY reminder to Admin/Manager.
-        Uses ${twoDayReminderTime} — set by CalculateReminderScheduleDelegate.</documentation>
-      <timerEventDefinition>
-        <timeDate>${twoDayReminderTime}</timeDate>
-      </timerEventDefinition>
+
+    <!-- Manager task: 2-day reminder timer (non-interrupting) -->
+    <boundaryEvent id="timer_mgr_2day" name="Manager 2-Day Reminder"
+      attachedToRef="task_manager_approval" cancelActivity="false">
+      <timerEventDefinition><timeDate>${twoDayReminderTime}</timeDate></timerEventDefinition>
     </boundaryEvent>
-    <serviceTask id="service_calculate_reminder_schedule" name="Calculate Reminder
-Schedule" flowable:expression="${leaveService.calculateReminderSchedule(execution)}">
-      <documentation>Calculates exact fire times for the 4-day and 2-day boundary timers.
-        Reads leaveDates, finds earliest future date, then sets:
-          fourDayReminderTime = earliestLeaveDate - 4 days (at 08:00)
-          twoDayReminderTime  = earliestLeaveDate - 2 days (at 08:00)
-        These are used by the two boundary timers on the approval task.</documentation>
+
+    <!-- Send 4-day reminder to manager -->
+    <serviceTask id="service_send_mgr_4day_reminder" name="Send Manager&#10;4-Day Reminder"
+      flowable:async="true" flowable:expression="${leaveService.sendReminderEmail(execution)}">
       <extensionElements>
-        <flowable:field name="leaveDates">
-          <flowable:expression><![CDATA[${leaveDates}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="reminderType" xmlns:flowable="http://flowable.org/bpmn"><flowable:string>4DAY</flowable:string></flowable:field>
+        <flowable:field name="userId"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${userId}</flowable:expression></flowable:field>
+        <flowable:field name="username"     xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${username}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
+        <flowable:field name="reason"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${reason}</flowable:expression></flowable:field>
+        <flowable:field name="managerEmail" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${managerEmail}</flowable:expression></flowable:field>
+        <flowable:field name="adminEmail"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${adminEmail}</flowable:expression></flowable:field>
       </extensionElements>
     </serviceTask>
-    <serviceTask id="service_send_4day_reminder_email" name="Send 4-Day Reminder
-Email to Admin/Manager" flowable:async="true" flowable:expression="${leaveService.sendFourDayReminderEmail(execution)}">
-      <documentation>Triggered by timer_4day_reminder.
-        Sends a reminder email to Admin/Manager: leave starts in 4 days, still pending approval.</documentation>
+
+    <!-- Send 2-day reminder to manager -->
+    <serviceTask id="service_send_mgr_2day_reminder" name="Send Manager&#10;2-Day Reminder"
+      flowable:async="true" flowable:expression="${leaveService.sendReminderEmail(execution)}">
       <extensionElements>
-        <flowable:field name="userId">
-          <flowable:expression><![CDATA[${userId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="username">
-          <flowable:expression><![CDATA[${username}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveDates">
-          <flowable:expression><![CDATA[${leaveDates}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="reason">
-          <flowable:expression><![CDATA[${reason}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="reminderType">
-          <flowable:string><![CDATA[4DAY]]></flowable:string>
-        </flowable:field>
-        <flowable:field name="managerEmail">
-          <flowable:expression><![CDATA[${managerEmail}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="adminEmail">
-          <flowable:expression><![CDATA[${adminEmail}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="reminderType" xmlns:flowable="http://flowable.org/bpmn"><flowable:string>2DAY</flowable:string></flowable:field>
+        <flowable:field name="userId"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${userId}</flowable:expression></flowable:field>
+        <flowable:field name="username"     xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${username}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
+        <flowable:field name="reason"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${reason}</flowable:expression></flowable:field>
+        <flowable:field name="managerEmail" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${managerEmail}</flowable:expression></flowable:field>
+        <flowable:field name="adminEmail"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${adminEmail}</flowable:expression></flowable:field>
       </extensionElements>
     </serviceTask>
-    <serviceTask id="service_send_2day_reminder_email" name="Send 2-Day Reminder
-Email to Admin/Manager" flowable:async="true" flowable:expression="${leaveService.sendTwoDayReminderEmail(execution)}">
-      <documentation>Triggered by timer_2day_reminder.
-        Sends a reminder email to Admin/Manager: leave starts in 2 days, still pending approval.</documentation>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 4 — Manager decision gateway
+    ═══════════════════════════════════════════════════════════ -->
+    <exclusiveGateway id="gateway_manager_decision" name="Manager Decision"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 5a — Manager APPROVED path
+         Update status → MANAGER_APPROVED, notify admin + employee
+    ═══════════════════════════════════════════════════════════ -->
+    <serviceTask id="service_set_manager_approved" name="Set Status:&#10;MANAGER_APPROVED"
+      flowable:expression="${leaveService.updateLeaveStatusFromFlowable(execution)}">
+      <documentation>Sets leave status to MANAGER_APPROVED and records managerApprovedBy.</documentation>
       <extensionElements>
-        <flowable:field name="userId">
-          <flowable:expression><![CDATA[${userId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="username">
-          <flowable:expression><![CDATA[${username}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveDates">
-          <flowable:expression><![CDATA[${leaveDates}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="reason">
-          <flowable:expression><![CDATA[${reason}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="reminderType">
-          <flowable:string><![CDATA[2DAY]]></flowable:string>
-        </flowable:field>
-        <flowable:field name="managerEmail">
-          <flowable:expression><![CDATA[${managerEmail}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="adminEmail">
-          <flowable:expression><![CDATA[${adminEmail}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="leaveId"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveId}</flowable:expression></flowable:field>
+        <flowable:field name="actorUsername" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${actorUsername}</flowable:expression></flowable:field>
+        <flowable:field name="status"        xmlns:flowable="http://flowable.org/bpmn"><flowable:string>MANAGER_APPROVED</flowable:string></flowable:field>
       </extensionElements>
     </serviceTask>
-    <exclusiveGateway id="gateway_approval_decision" name="Status"></exclusiveGateway>
-    <serviceTask id="service_update_approved_status" name="Update Status
-To Approved" flowable:expression="${leaveService.updateApprovedLeaveStatus(execution)}">
+
+    <serviceTask id="service_notify_admin" name="Notify Admin for&#10;Final Approval"
+      flowable:async="true" flowable:expression="${leaveService.notifyAdminForFinalApproval(execution)}">
+      <documentation>
+        Emails admin: manager approved, your final decision needed.
+        Emails employee: manager approved, pending admin.
+      </documentation>
+    </serviceTask>
+
+    <serviceTask id="service_calculate_admin_reminder_schedule" name="Calculate Admin&#10;Reminder Schedule"
+      flowable:expression="${leaveService.calculateReminderSchedule(execution)}">
+      <documentation>
+        Recalculates fourDayReminderTime and twoDayReminderTime based on the
+        earliest leave date, so the admin task boundary timers fire correctly.
+      </documentation>
+    </serviceTask>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 6 — Admin approval user task + reminder timers
+    ═══════════════════════════════════════════════════════════ -->
+    <userTask id="task_admin_approval" name="Admin Final Approval"
+      flowable:candidateGroups="ADMIN" flowable:formFieldValidation="true">
+      <documentation>
+        Waits for Admin to give final APPROVE or REJECT.
+        Non-interrupting boundary timers send 4-day and 2-day reminders to admin.
+      </documentation>
       <extensionElements>
-        <flowable:field name="leaveId">
-          <flowable:expression><![CDATA[${leaveId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="actorUsername">
-          <flowable:expression><![CDATA[${actorUsername}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="status">
-          <flowable:string><![CDATA[APPROVED]]></flowable:string>
-        </flowable:field>
+        <flowable:formProperty id="actorUsername"   type="string" required="true" xmlns:flowable="http://flowable.org/bpmn"/>
+        <flowable:formProperty id="status" type="enum" required="true" xmlns:flowable="http://flowable.org/bpmn">
+          <flowable:value id="APPROVED" name="APPROVED"/>
+          <flowable:value id="REJECTED" name="REJECTED"/>
+        </flowable:formProperty>
+        <flowable:formProperty id="rejectionReason" type="string" xmlns:flowable="http://flowable.org/bpmn"/>
+        <modeler:initiator-can-complete xmlns:modeler="http://flowable.org/modeler">false</modeler:initiator-can-complete>
+      </extensionElements>
+    </userTask>
+
+    <!-- Admin task: 4-day reminder timer (non-interrupting) -->
+    <boundaryEvent id="timer_admin_4day" name="Admin 4-Day Reminder"
+      attachedToRef="task_admin_approval" cancelActivity="false">
+      <timerEventDefinition><timeDate>${fourDayReminderTime}</timeDate></timerEventDefinition>
+    </boundaryEvent>
+
+    <!-- Admin task: 2-day reminder timer (non-interrupting) -->
+    <boundaryEvent id="timer_admin_2day" name="Admin 2-Day Reminder"
+      attachedToRef="task_admin_approval" cancelActivity="false">
+      <timerEventDefinition><timeDate>${twoDayReminderTime}</timeDate></timerEventDefinition>
+    </boundaryEvent>
+
+    <!-- Send 4-day reminder to admin -->
+    <serviceTask id="service_send_admin_4day_reminder" name="Send Admin&#10;4-Day Reminder"
+      flowable:async="true" flowable:expression="${leaveService.sendReminderEmail(execution)}">
+      <extensionElements>
+        <flowable:field name="reminderType" xmlns:flowable="http://flowable.org/bpmn"><flowable:string>4DAY</flowable:string></flowable:field>
+        <flowable:field name="userId"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${userId}</flowable:expression></flowable:field>
+        <flowable:field name="username"     xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${username}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
+        <flowable:field name="reason"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${reason}</flowable:expression></flowable:field>
+        <flowable:field name="managerEmail" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${adminEmail}</flowable:expression></flowable:field>
+        <flowable:field name="adminEmail"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${adminEmail}</flowable:expression></flowable:field>
       </extensionElements>
     </serviceTask>
-    <serviceTask id="service_deduct_leave_balance" name="Deduct Leave
-Balance" flowable:async="true" flowable:exclusive="false" flowable:expression="${leaveService.deductLeaveBalance(execution)}">
+
+    <!-- Send 2-day reminder to admin -->
+    <serviceTask id="service_send_admin_2day_reminder" name="Send Admin&#10;2-Day Reminder"
+      flowable:async="true" flowable:expression="${leaveService.sendReminderEmail(execution)}">
       <extensionElements>
-        <flowable:field name="userId">
-          <flowable:expression><![CDATA[${userId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveTypeId">
-          <flowable:expression><![CDATA[${leaveTypeId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveDates">
-          <flowable:expression><![CDATA[${leaveDates}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="reminderType" xmlns:flowable="http://flowable.org/bpmn"><flowable:string>2DAY</flowable:string></flowable:field>
+        <flowable:field name="userId"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${userId}</flowable:expression></flowable:field>
+        <flowable:field name="username"     xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${username}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
+        <flowable:field name="reason"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${reason}</flowable:expression></flowable:field>
+        <flowable:field name="managerEmail" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${adminEmail}</flowable:expression></flowable:field>
+        <flowable:field name="adminEmail"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${adminEmail}</flowable:expression></flowable:field>
       </extensionElements>
     </serviceTask>
-    <serviceTask id="service_send_approved_mail" name="Send Approved
-Mail" flowable:async="true" flowable:exclusive="false" flowable:expression="${leaveService.sendApprovedLeaveStatusMail(execution)}">
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 7 — Admin decision gateway
+    ═══════════════════════════════════════════════════════════ -->
+    <exclusiveGateway id="gateway_admin_decision" name="Admin Decision"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 8a — APPROVED path (admin approved OR manager rejected skips here)
+         Update status → APPROVED, deduct balance, send approval email
+    ═══════════════════════════════════════════════════════════ -->
+    <serviceTask id="service_set_approved" name="Set Status: APPROVED"
+      flowable:expression="${leaveService.updateLeaveStatusFromFlowable(execution)}">
       <extensionElements>
-        <flowable:field name="employeeName">
-          <flowable:expression><![CDATA[${employeeName}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveType">
-          <flowable:expression><![CDATA[${leaveType}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveDates">
-          <flowable:expression><![CDATA[${leaveDates}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="reason">
-          <flowable:expression><![CDATA[${reason}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="status">
-          <flowable:string><![CDATA[APPROVED]]></flowable:string>
-        </flowable:field>
-        <flowable:field name="actionBy">
-          <flowable:expression><![CDATA[${actorUsername}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="notifyUserIds">
-          <flowable:expression><![CDATA[${notifyUserIds}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="leaveId"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveId}</flowable:expression></flowable:field>
+        <flowable:field name="actorUsername" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${actorUsername}</flowable:expression></flowable:field>
+        <flowable:field name="status"        xmlns:flowable="http://flowable.org/bpmn"><flowable:string>APPROVED</flowable:string></flowable:field>
       </extensionElements>
     </serviceTask>
-    <serviceTask id="service_update_rejected_status" name="Update Status
-To Rejected" flowable:expression="${leaveService.updateRejectedLeaveStatus(execution)}">
+
+    <serviceTask id="service_deduct_balance" name="Deduct Leave Balance"
+      flowable:async="true" flowable:exclusive="false"
+      flowable:expression="${leaveService.deductLeaveBalance(execution)}">
       <extensionElements>
-        <flowable:field name="leaveId">
-          <flowable:expression><![CDATA[${leaveId}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="actorUsername">
-          <flowable:expression><![CDATA[${actorUsername}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="status">
-          <flowable:string><![CDATA[REJECTED]]></flowable:string>
-        </flowable:field>
-        <flowable:field name="rejectionReason">
-          <flowable:expression><![CDATA[${rejectionReason}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="userId"      xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${userId}</flowable:expression></flowable:field>
+        <flowable:field name="leaveTypeId" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveTypeId}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"  xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
       </extensionElements>
     </serviceTask>
-    <serviceTask id="service_send_rejected_mail" name="Send Rejected
-Mail" flowable:async="true" flowable:exclusive="false" flowable:expression="${leaveService.sendRejectedLeaveStatusMail(execution)}">
+
+    <serviceTask id="service_send_approved_mail" name="Send Approval Email&#10;to Employee"
+      flowable:async="true" flowable:exclusive="false"
+      flowable:expression="${leaveService.sendLeaveStatusMail(execution)}">
       <extensionElements>
-        <flowable:field name="employeeName">
-          <flowable:expression><![CDATA[${employeeName}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveType">
-          <flowable:expression><![CDATA[${leaveType}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="leaveDates">
-          <flowable:expression><![CDATA[${leaveDates}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="reason">
-          <flowable:expression><![CDATA[${reason}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="status">
-          <flowable:string><![CDATA[REJECTED]]></flowable:string>
-        </flowable:field>
-        <flowable:field name="actionBy">
-          <flowable:expression><![CDATA[${actorUsername}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="rejectionReason">
-          <flowable:expression><![CDATA[${rejectionReason}]]></flowable:expression>
-        </flowable:field>
-        <flowable:field name="notifyUserIds">
-          <flowable:expression><![CDATA[${notifyUserIds}]]></flowable:expression>
-        </flowable:field>
+        <flowable:field name="status"       xmlns:flowable="http://flowable.org/bpmn"><flowable:string>APPROVED</flowable:string></flowable:field>
+        <flowable:field name="employeeName" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${employeeName}</flowable:expression></flowable:field>
+        <flowable:field name="leaveType"    xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveType}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
+        <flowable:field name="reason"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${reason}</flowable:expression></flowable:field>
+        <flowable:field name="actionBy"     xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${actorUsername}</flowable:expression></flowable:field>
+        <flowable:field name="notifyUserIds" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${notifyUserIds}</flowable:expression></flowable:field>
       </extensionElements>
     </serviceTask>
-    <endEvent id="end_leave_process" name="Leave Process
-Completed"></endEvent>
-    <sequenceFlow id="flow_start_to_resolve" sourceRef="start_leave_request" targetRef="service_resolve_approver"></sequenceFlow>
-    <sequenceFlow id="flow_resolve_to_calculate" sourceRef="service_resolve_approver" targetRef="service_calculate_reminder_schedule"></sequenceFlow>
-    <sequenceFlow id="flow_calculate_to_task" sourceRef="service_calculate_reminder_schedule" targetRef="task_manager_approval"></sequenceFlow>
-    <sequenceFlow id="flow_task_to_decision" sourceRef="task_manager_approval" targetRef="gateway_approval_decision"></sequenceFlow>
-    <sequenceFlow id="flow_approved" name="APPROVED" sourceRef="gateway_approval_decision" targetRef="service_update_approved_status">
+
+    <!-- ═══════════════════════════════════════════════════════════
+         STEP 8b — REJECTED path (manager OR admin rejected)
+         Update status → REJECTED, send rejection email
+    ═══════════════════════════════════════════════════════════ -->
+    <serviceTask id="service_set_rejected" name="Set Status: REJECTED"
+      flowable:expression="${leaveService.updateLeaveStatusFromFlowable(execution)}">
+      <extensionElements>
+        <flowable:field name="leaveId"         xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveId}</flowable:expression></flowable:field>
+        <flowable:field name="actorUsername"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${actorUsername}</flowable:expression></flowable:field>
+        <flowable:field name="status"          xmlns:flowable="http://flowable.org/bpmn"><flowable:string>REJECTED</flowable:string></flowable:field>
+        <flowable:field name="rejectionReason" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${rejectionReason}</flowable:expression></flowable:field>
+      </extensionElements>
+    </serviceTask>
+
+    <serviceTask id="service_send_rejected_mail" name="Send Rejection Email&#10;to Employee"
+      flowable:async="true" flowable:exclusive="false"
+      flowable:expression="${leaveService.sendLeaveStatusMail(execution)}">
+      <extensionElements>
+        <flowable:field name="status"          xmlns:flowable="http://flowable.org/bpmn"><flowable:string>REJECTED</flowable:string></flowable:field>
+        <flowable:field name="employeeName"    xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${employeeName}</flowable:expression></flowable:field>
+        <flowable:field name="leaveType"       xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveType}</flowable:expression></flowable:field>
+        <flowable:field name="leaveDates"      xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${leaveDates}</flowable:expression></flowable:field>
+        <flowable:field name="reason"          xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${reason}</flowable:expression></flowable:field>
+        <flowable:field name="actionBy"        xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${actorUsername}</flowable:expression></flowable:field>
+        <flowable:field name="rejectionReason" xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${rejectionReason}</flowable:expression></flowable:field>
+        <flowable:field name="notifyUserIds"   xmlns:flowable="http://flowable.org/bpmn"><flowable:expression>${notifyUserIds}</flowable:expression></flowable:field>
+      </extensionElements>
+    </serviceTask>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         END
+    ═══════════════════════════════════════════════════════════ -->
+    <endEvent id="end_leave_process" name="Leave Process Completed"/>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         SEQUENCE FLOWS
+    ═══════════════════════════════════════════════════════════ -->
+
+    <!-- Start → Resolve approver → Calculate reminders → Manager task -->
+    <sequenceFlow id="flow_start_to_resolve"    sourceRef="start_leave_request"             targetRef="service_resolve_approver"/>
+    <sequenceFlow id="flow_resolve_to_calc"     sourceRef="service_resolve_approver"         targetRef="service_calculate_reminder_schedule"/>
+    <sequenceFlow id="flow_calc_to_mgr_task"    sourceRef="service_calculate_reminder_schedule" targetRef="task_manager_approval"/>
+
+    <!-- Manager task → Manager decision gateway -->
+    <sequenceFlow id="flow_mgr_task_to_gw"      sourceRef="task_manager_approval"            targetRef="gateway_manager_decision"/>
+
+    <!-- Manager reminder timers -->
+    <sequenceFlow id="flow_mgr_4day_to_email"   sourceRef="timer_mgr_4day"                   targetRef="service_send_mgr_4day_reminder"/>
+    <sequenceFlow id="flow_mgr_2day_to_email"   sourceRef="timer_mgr_2day"                   targetRef="service_send_mgr_2day_reminder"/>
+
+    <!-- Manager APPROVED → set MANAGER_APPROVED → notify admin → Admin task -->
+    <sequenceFlow id="flow_mgr_approved" name="APPROVED" sourceRef="gateway_manager_decision" targetRef="service_set_manager_approved">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${status == 'APPROVED'}]]></conditionExpression>
     </sequenceFlow>
-    <sequenceFlow id="flow_approved_to_deduct" sourceRef="service_update_approved_status" targetRef="service_deduct_leave_balance"></sequenceFlow>
-    <sequenceFlow id="flow_deduct_to_mail" sourceRef="service_deduct_leave_balance" targetRef="service_send_approved_mail"></sequenceFlow>
-    <sequenceFlow id="flow_approved_mail_to_end" sourceRef="service_send_approved_mail" targetRef="end_leave_process"></sequenceFlow>
-    <sequenceFlow id="flow_rejected" name="REJECTED" sourceRef="gateway_approval_decision" targetRef="service_update_rejected_status">
+    <sequenceFlow id="flow_mgr_approved_to_notify" sourceRef="service_set_manager_approved"  targetRef="service_notify_admin"/>
+    <sequenceFlow id="flow_notify_to_calc_admin"   sourceRef="service_notify_admin"           targetRef="service_calculate_admin_reminder_schedule"/>
+    <sequenceFlow id="flow_calc_admin_to_task"     sourceRef="service_calculate_admin_reminder_schedule" targetRef="task_admin_approval"/>
+
+    <!-- Admin task → Admin decision gateway -->
+    <sequenceFlow id="flow_admin_task_to_gw"    sourceRef="task_admin_approval"              targetRef="gateway_admin_decision"/>
+
+    <!-- Admin reminder timers -->
+    <sequenceFlow id="flow_admin_4day_to_email" sourceRef="timer_admin_4day"                 targetRef="service_send_admin_4day_reminder"/>
+    <sequenceFlow id="flow_admin_2day_to_email" sourceRef="timer_admin_2day"                 targetRef="service_send_admin_2day_reminder"/>
+
+    <!-- Admin APPROVED → set APPROVED → deduct balance → send approval email → end -->
+    <sequenceFlow id="flow_admin_approved" name="APPROVED" sourceRef="gateway_admin_decision" targetRef="service_set_approved">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${status == 'APPROVED'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow_approved_to_deduct"  sourceRef="service_set_approved"             targetRef="service_deduct_balance"/>
+    <sequenceFlow id="flow_deduct_to_mail"      sourceRef="service_deduct_balance"            targetRef="service_send_approved_mail"/>
+    <sequenceFlow id="flow_approved_mail_to_end" sourceRef="service_send_approved_mail"       targetRef="end_leave_process"/>
+
+    <!-- Manager REJECTED → set REJECTED → send rejection email → end -->
+    <sequenceFlow id="flow_mgr_rejected" name="REJECTED" sourceRef="gateway_manager_decision" targetRef="service_set_rejected">
       <conditionExpression xsi:type="tFormalExpression"><![CDATA[${status == 'REJECTED'}]]></conditionExpression>
     </sequenceFlow>
-    <sequenceFlow id="flow_rejected_to_mail" sourceRef="service_update_rejected_status" targetRef="service_send_rejected_mail"></sequenceFlow>
-    <sequenceFlow id="flow_rejected_mail_to_end" sourceRef="service_send_rejected_mail" targetRef="end_leave_process"></sequenceFlow>
-    <sequenceFlow id="flow_2day_timer_to_email" sourceRef="timer_2day_reminder" targetRef="service_send_2day_reminder_email"></sequenceFlow>
-    <sequenceFlow id="flow_4day_timer_to_email" sourceRef="timer_4day_reminder" targetRef="service_send_4day_reminder_email"></sequenceFlow>
+
+    <!-- Admin REJECTED → set REJECTED → send rejection email → end -->
+    <sequenceFlow id="flow_admin_rejected" name="REJECTED" sourceRef="gateway_admin_decision" targetRef="service_set_rejected">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${status == 'REJECTED'}]]></conditionExpression>
+    </sequenceFlow>
+
+    <!-- Shared rejection tail (both manager and admin rejection converge here) -->
+    <sequenceFlow id="flow_rejected_to_mail"    sourceRef="service_set_rejected"             targetRef="service_send_rejected_mail"/>
+    <sequenceFlow id="flow_rejected_mail_to_end" sourceRef="service_send_rejected_mail"      targetRef="end_leave_process"/>
+
   </process>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       DIAGRAM LAYOUT
+       Row layout (y-centres):
+         Main flow row  y=240  (start → resolve → calc → mgr task → mgr gw → mgr-approved → notify → admin task → admin gw → approved → deduct → mail → end)
+         Rejection row  y=420  (set_rejected → send_rejected_mail)
+         Mgr reminders  y=420  (below manager task)
+         Admin reminders y=420 (below admin task)
+  ═══════════════════════════════════════════════════════════════════ -->
   <bpmndi:BPMNDiagram id="BPMNDiagram_leaveApprovalProcess_1">
     <bpmndi:BPMNPlane bpmnElement="leaveApprovalProcess_1" id="BPMNPlane_leaveApprovalProcess_1">
-      <bpmndi:BPMNShape bpmnElement="start_leave_request" id="BPMNShape_start_leave_request">
-        <omgdc:Bounds height="30.0" width="30.0" x="60.0" y="225.0"></omgdc:Bounds>
+
+      <!-- Start event -->
+      <bpmndi:BPMNShape bpmnElement="start_leave_request" id="shape_start">
+        <omgdc:Bounds x="62" y="225" width="30" height="30"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_resolve_approver" id="BPMNShape_service_resolve_approver">
-        <omgdc:Bounds height="80.0" width="160.0" x="140.0" y="200.0"></omgdc:Bounds>
+
+      <!-- Resolve approver -->
+      <bpmndi:BPMNShape bpmnElement="service_resolve_approver" id="shape_resolve">
+        <omgdc:Bounds x="140" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="task_manager_approval" id="BPMNShape_task_manager_approval">
-        <omgdc:Bounds height="80.0" width="160.0" x="600.0" y="200.0"></omgdc:Bounds>
+
+      <!-- Calculate reminder schedule -->
+      <bpmndi:BPMNShape bpmnElement="service_calculate_reminder_schedule" id="shape_calc">
+        <omgdc:Bounds x="360" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="timer_4day_reminder" id="BPMNShape_timer_4day_reminder">
-        <omgdc:Bounds height="31.0" width="31.0" x="624.5" y="265.5"></omgdc:Bounds>
+
+      <!-- Manager approval task -->
+      <bpmndi:BPMNShape bpmnElement="task_manager_approval" id="shape_mgr_task">
+        <omgdc:Bounds x="580" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="timer_2day_reminder" id="BPMNShape_timer_2day_reminder">
-        <omgdc:Bounds height="31.0" width="31.0" x="714.5" y="265.5"></omgdc:Bounds>
+
+      <!-- Manager 4-day timer (bottom-left of manager task) -->
+      <bpmndi:BPMNShape bpmnElement="timer_mgr_4day" id="shape_mgr_4day">
+        <omgdc:Bounds x="604" y="265" width="31" height="31"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_calculate_reminder_schedule" id="BPMNShape_service_calculate_reminder_schedule">
-        <omgdc:Bounds height="80.0" width="160.0" x="360.0" y="200.0"></omgdc:Bounds>
+
+      <!-- Manager 2-day timer (bottom-right of manager task) -->
+      <bpmndi:BPMNShape bpmnElement="timer_mgr_2day" id="shape_mgr_2day">
+        <omgdc:Bounds x="694" y="265" width="31" height="31"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_send_4day_reminder_email" id="BPMNShape_service_send_4day_reminder_email">
-        <omgdc:Bounds height="80.0" width="160.0" x="560.0" y="420.0"></omgdc:Bounds>
+
+      <!-- Manager 4-day reminder email -->
+      <bpmndi:BPMNShape bpmnElement="service_send_mgr_4day_reminder" id="shape_mgr_4day_email">
+        <omgdc:Bounds x="540" y="420" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_send_2day_reminder_email" id="BPMNShape_service_send_2day_reminder_email">
-        <omgdc:Bounds height="80.0" width="160.0" x="735.0" y="420.0"></omgdc:Bounds>
+
+      <!-- Manager 2-day reminder email -->
+      <bpmndi:BPMNShape bpmnElement="service_send_mgr_2day_reminder" id="shape_mgr_2day_email">
+        <omgdc:Bounds x="720" y="420" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="gateway_approval_decision" id="BPMNShape_gateway_approval_decision">
-        <omgdc:Bounds height="40.0" width="40.0" x="830.0" y="220.0"></omgdc:Bounds>
+
+      <!-- Manager decision gateway -->
+      <bpmndi:BPMNShape bpmnElement="gateway_manager_decision" id="shape_mgr_gw" isMarkerVisible="true">
+        <omgdc:Bounds x="800" y="220" width="40" height="40"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_update_approved_status" id="BPMNShape_service_update_approved_status">
-        <omgdc:Bounds height="80.0" width="160.0" x="940.0" y="60.0"></omgdc:Bounds>
+
+      <!-- Set MANAGER_APPROVED status -->
+      <bpmndi:BPMNShape bpmnElement="service_set_manager_approved" id="shape_set_mgr_approved">
+        <omgdc:Bounds x="900" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_deduct_leave_balance" id="BPMNShape_service_deduct_leave_balance">
-        <omgdc:Bounds height="80.0" width="160.0" x="1160.0" y="60.0"></omgdc:Bounds>
+
+      <!-- Notify admin -->
+      <bpmndi:BPMNShape bpmnElement="service_notify_admin" id="shape_notify_admin">
+        <omgdc:Bounds x="1120" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_send_approved_mail" id="BPMNShape_service_send_approved_mail">
-        <omgdc:Bounds height="80.0" width="160.0" x="1380.0" y="60.0"></omgdc:Bounds>
+
+      <!-- Calculate admin reminder schedule -->
+      <bpmndi:BPMNShape bpmnElement="service_calculate_admin_reminder_schedule" id="shape_calc_admin">
+        <omgdc:Bounds x="1340" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_update_rejected_status" id="BPMNShape_service_update_rejected_status">
-        <omgdc:Bounds height="80.0" width="160.0" x="940.0" y="360.0"></omgdc:Bounds>
+
+      <!-- Admin approval task -->
+      <bpmndi:BPMNShape bpmnElement="task_admin_approval" id="shape_admin_task">
+        <omgdc:Bounds x="1560" y="200" width="160" height="80"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="service_send_rejected_mail" id="BPMNShape_service_send_rejected_mail">
-        <omgdc:Bounds height="80.0" width="160.0" x="1160.0" y="360.0"></omgdc:Bounds>
+
+      <!-- Admin 4-day timer (bottom-left of admin task) -->
+      <bpmndi:BPMNShape bpmnElement="timer_admin_4day" id="shape_admin_4day">
+        <omgdc:Bounds x="1584" y="265" width="31" height="31"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNShape bpmnElement="end_leave_process" id="BPMNShape_end_leave_process">
-        <omgdc:Bounds height="28.0" width="28.0" x="1610.0" y="212.0"></omgdc:Bounds>
+
+      <!-- Admin 2-day timer (bottom-right of admin task) -->
+      <bpmndi:BPMNShape bpmnElement="timer_admin_2day" id="shape_admin_2day">
+        <omgdc:Bounds x="1674" y="265" width="31" height="31"/>
       </bpmndi:BPMNShape>
-      <bpmndi:BPMNEdge bpmnElement="flow_task_to_decision" id="BPMNEdge_flow_task_to_decision" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="20.0" flowable:targetDockerY="20.0">
-        <omgdi:waypoint x="759.9499999999999" y="240.0"></omgdi:waypoint>
-        <omgdi:waypoint x="830.0" y="240.0"></omgdi:waypoint>
+
+      <!-- Admin 4-day reminder email -->
+      <bpmndi:BPMNShape bpmnElement="service_send_admin_4day_reminder" id="shape_admin_4day_email">
+        <omgdc:Bounds x="1520" y="420" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Admin 2-day reminder email -->
+      <bpmndi:BPMNShape bpmnElement="service_send_admin_2day_reminder" id="shape_admin_2day_email">
+        <omgdc:Bounds x="1700" y="420" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Admin decision gateway -->
+      <bpmndi:BPMNShape bpmnElement="gateway_admin_decision" id="shape_admin_gw" isMarkerVisible="true">
+        <omgdc:Bounds x="1780" y="220" width="40" height="40"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Set APPROVED status -->
+      <bpmndi:BPMNShape bpmnElement="service_set_approved" id="shape_set_approved">
+        <omgdc:Bounds x="1880" y="100" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Deduct leave balance -->
+      <bpmndi:BPMNShape bpmnElement="service_deduct_balance" id="shape_deduct">
+        <omgdc:Bounds x="2100" y="100" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Send approval email -->
+      <bpmndi:BPMNShape bpmnElement="service_send_approved_mail" id="shape_approved_mail">
+        <omgdc:Bounds x="2320" y="100" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Set REJECTED status (shared by manager + admin rejection) -->
+      <bpmndi:BPMNShape bpmnElement="service_set_rejected" id="shape_set_rejected">
+        <omgdc:Bounds x="1880" y="360" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- Send rejection email -->
+      <bpmndi:BPMNShape bpmnElement="service_send_rejected_mail" id="shape_rejected_mail">
+        <omgdc:Bounds x="2100" y="360" width="160" height="80"/>
+      </bpmndi:BPMNShape>
+
+      <!-- End event -->
+      <bpmndi:BPMNShape bpmnElement="end_leave_process" id="shape_end">
+        <omgdc:Bounds x="2540" y="226" width="28" height="28"/>
+      </bpmndi:BPMNShape>
+
+      <!-- ── EDGES ── -->
+
+      <!-- Start → Resolve -->
+      <bpmndi:BPMNEdge bpmnElement="flow_start_to_resolve" id="edge_start_resolve">
+        <omgdi:waypoint x="92" y="240"/>
+        <omgdi:waypoint x="140" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_calculate_to_task" id="BPMNEdge_flow_calculate_to_task" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="519.9499999997918" y="240.0"></omgdi:waypoint>
-        <omgdi:waypoint x="599.9999999998959" y="240.0"></omgdi:waypoint>
+
+      <!-- Resolve → Calc -->
+      <bpmndi:BPMNEdge bpmnElement="flow_resolve_to_calc" id="edge_resolve_calc">
+        <omgdi:waypoint x="300" y="240"/>
+        <omgdi:waypoint x="360" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_deduct_to_mail" id="BPMNEdge_flow_deduct_to_mail" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="1319.95" y="100.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1380.0" y="100.0"></omgdi:waypoint>
+
+      <!-- Calc → Manager task -->
+      <bpmndi:BPMNEdge bpmnElement="flow_calc_to_mgr_task" id="edge_calc_mgr">
+        <omgdi:waypoint x="520" y="240"/>
+        <omgdi:waypoint x="580" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_resolve_to_calculate" id="BPMNEdge_flow_resolve_to_calculate" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="299.9499999997416" y="240.0"></omgdi:waypoint>
-        <omgdi:waypoint x="360.0" y="240.0"></omgdi:waypoint>
+
+      <!-- Manager task → Manager gateway -->
+      <bpmndi:BPMNEdge bpmnElement="flow_mgr_task_to_gw" id="edge_mgr_task_gw">
+        <omgdi:waypoint x="740" y="240"/>
+        <omgdi:waypoint x="800" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_rejected_mail_to_end" id="BPMNEdge_flow_rejected_mail_to_end" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="14.0" flowable:targetDockerY="14.0">
-        <omgdi:waypoint x="1319.95" y="400.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1624.0" y="400.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1624.0" y="239.94992575154598"></omgdi:waypoint>
+
+      <!-- Manager 4-day timer → email -->
+      <bpmndi:BPMNEdge bpmnElement="flow_mgr_4day_to_email" id="edge_mgr_4day_email">
+        <omgdi:waypoint x="620" y="296"/>
+        <omgdi:waypoint x="620" y="420"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_start_to_resolve" id="BPMNEdge_flow_start_to_resolve" flowable:sourceDockerX="15.0" flowable:sourceDockerY="15.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="89.94999913076799" y="240.0"></omgdi:waypoint>
-        <omgdi:waypoint x="140.0" y="240.0"></omgdi:waypoint>
+
+      <!-- Manager 2-day timer → email -->
+      <bpmndi:BPMNEdge bpmnElement="flow_mgr_2day_to_email" id="edge_mgr_2day_email">
+        <omgdi:waypoint x="710" y="296"/>
+        <omgdi:waypoint x="800" y="296"/>
+        <omgdi:waypoint x="800" y="420"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_2day_timer_to_email" id="BPMNEdge_flow_2day_timer_to_email" flowable:sourceDockerX="15.5" flowable:sourceDockerY="15.5" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="745.449997386971" y="281.0"></omgdi:waypoint>
-        <omgdi:waypoint x="815.0" y="281.0"></omgdi:waypoint>
-        <omgdi:waypoint x="815.0" y="420.0"></omgdi:waypoint>
+
+      <!-- Manager gateway → APPROVED → set MANAGER_APPROVED -->
+      <bpmndi:BPMNEdge bpmnElement="flow_mgr_approved" id="edge_mgr_approved">
+        <omgdi:waypoint x="840" y="240"/>
+        <omgdi:waypoint x="900" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_rejected_to_mail" id="BPMNEdge_flow_rejected_to_mail" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="1099.95" y="400.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1160.0" y="400.0"></omgdi:waypoint>
+
+      <!-- Set MANAGER_APPROVED → Notify admin -->
+      <bpmndi:BPMNEdge bpmnElement="flow_mgr_approved_to_notify" id="edge_mgr_approved_notify">
+        <omgdi:waypoint x="1060" y="240"/>
+        <omgdi:waypoint x="1120" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_4day_timer_to_email" id="BPMNEdge_flow_4day_timer_to_email" flowable:sourceDockerX="15.5" flowable:sourceDockerY="15.5" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="640.0" y="296.44999941051805"></omgdi:waypoint>
-        <omgdi:waypoint x="640.0" y="420.0"></omgdi:waypoint>
+
+      <!-- Notify admin → Calc admin reminders -->
+      <bpmndi:BPMNEdge bpmnElement="flow_notify_to_calc_admin" id="edge_notify_calc_admin">
+        <omgdi:waypoint x="1280" y="240"/>
+        <omgdi:waypoint x="1340" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_approved" id="BPMNEdge_flow_approved" flowable:sourceDockerX="20.0" flowable:sourceDockerY="20.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="850.0" y="220.0"></omgdi:waypoint>
-        <omgdi:waypoint x="850.0" y="100.0"></omgdi:waypoint>
-        <omgdi:waypoint x="940.0" y="100.0"></omgdi:waypoint>
+
+      <!-- Calc admin reminders → Admin task -->
+      <bpmndi:BPMNEdge bpmnElement="flow_calc_admin_to_task" id="edge_calc_admin_task">
+        <omgdi:waypoint x="1500" y="240"/>
+        <omgdi:waypoint x="1560" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_approved_to_deduct" id="BPMNEdge_flow_approved_to_deduct" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="1099.95" y="100.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1160.0" y="100.0"></omgdi:waypoint>
+
+      <!-- Admin task → Admin gateway -->
+      <bpmndi:BPMNEdge bpmnElement="flow_admin_task_to_gw" id="edge_admin_task_gw">
+        <omgdi:waypoint x="1720" y="240"/>
+        <omgdi:waypoint x="1780" y="240"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_rejected" id="BPMNEdge_flow_rejected" flowable:sourceDockerX="20.0" flowable:sourceDockerY="20.0" flowable:targetDockerX="80.0" flowable:targetDockerY="40.0">
-        <omgdi:waypoint x="850.0" y="259.9437695190506"></omgdi:waypoint>
-        <omgdi:waypoint x="850.0" y="400.0"></omgdi:waypoint>
-        <omgdi:waypoint x="940.0" y="400.0"></omgdi:waypoint>
+
+      <!-- Admin 4-day timer → email -->
+      <bpmndi:BPMNEdge bpmnElement="flow_admin_4day_to_email" id="edge_admin_4day_email">
+        <omgdi:waypoint x="1600" y="296"/>
+        <omgdi:waypoint x="1600" y="420"/>
       </bpmndi:BPMNEdge>
-      <bpmndi:BPMNEdge bpmnElement="flow_approved_mail_to_end" id="BPMNEdge_flow_approved_mail_to_end" flowable:sourceDockerX="80.0" flowable:sourceDockerY="40.0" flowable:targetDockerX="14.0" flowable:targetDockerY="14.0">
-        <omgdi:waypoint x="1539.94999999999" y="100.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1624.0" y="100.0"></omgdi:waypoint>
-        <omgdi:waypoint x="1624.0" y="212.0"></omgdi:waypoint>
+
+      <!-- Admin 2-day timer → email -->
+      <bpmndi:BPMNEdge bpmnElement="flow_admin_2day_to_email" id="edge_admin_2day_email">
+        <omgdi:waypoint x="1690" y="296"/>
+        <omgdi:waypoint x="1780" y="296"/>
+        <omgdi:waypoint x="1780" y="420"/>
       </bpmndi:BPMNEdge>
+
+      <!-- Admin gateway → APPROVED → set APPROVED -->
+      <bpmndi:BPMNEdge bpmnElement="flow_admin_approved" id="edge_admin_approved">
+        <omgdi:waypoint x="1800" y="220"/>
+        <omgdi:waypoint x="1800" y="140"/>
+        <omgdi:waypoint x="1880" y="140"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Set APPROVED → Deduct balance -->
+      <bpmndi:BPMNEdge bpmnElement="flow_approved_to_deduct" id="edge_approved_deduct">
+        <omgdi:waypoint x="2040" y="140"/>
+        <omgdi:waypoint x="2100" y="140"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Deduct balance → Send approval email -->
+      <bpmndi:BPMNEdge bpmnElement="flow_deduct_to_mail" id="edge_deduct_mail">
+        <omgdi:waypoint x="2260" y="140"/>
+        <omgdi:waypoint x="2320" y="140"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Send approval email → End -->
+      <bpmndi:BPMNEdge bpmnElement="flow_approved_mail_to_end" id="edge_approved_mail_end">
+        <omgdi:waypoint x="2480" y="140"/>
+        <omgdi:waypoint x="2554" y="140"/>
+        <omgdi:waypoint x="2554" y="226"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Manager gateway → REJECTED → set REJECTED -->
+      <bpmndi:BPMNEdge bpmnElement="flow_mgr_rejected" id="edge_mgr_rejected">
+        <omgdi:waypoint x="820" y="260"/>
+        <omgdi:waypoint x="820" y="400"/>
+        <omgdi:waypoint x="1800" y="400"/>
+        <omgdi:waypoint x="1880" y="400"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Admin gateway → REJECTED → set REJECTED -->
+      <bpmndi:BPMNEdge bpmnElement="flow_admin_rejected" id="edge_admin_rejected">
+        <omgdi:waypoint x="1800" y="260"/>
+        <omgdi:waypoint x="1800" y="400"/>
+        <omgdi:waypoint x="1880" y="400"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Set REJECTED → Send rejection email -->
+      <bpmndi:BPMNEdge bpmnElement="flow_rejected_to_mail" id="edge_rejected_mail">
+        <omgdi:waypoint x="2040" y="400"/>
+        <omgdi:waypoint x="2100" y="400"/>
+      </bpmndi:BPMNEdge>
+
+      <!-- Send rejection email → End -->
+      <bpmndi:BPMNEdge bpmnElement="flow_rejected_mail_to_end" id="edge_rejected_mail_end">
+        <omgdi:waypoint x="2260" y="400"/>
+        <omgdi:waypoint x="2554" y="400"/>
+        <omgdi:waypoint x="2554" y="254"/>
+      </bpmndi:BPMNEdge>
+
     </bpmndi:BPMNPlane>
   </bpmndi:BPMNDiagram>
 </definitions>

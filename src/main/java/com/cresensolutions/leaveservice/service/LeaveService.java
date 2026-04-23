@@ -7,6 +7,7 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.MailLeaveDecisionRequest;
 import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
@@ -30,6 +31,8 @@ public interface LeaveService {
     Page<LeaveResponse> getLeavesByManagerUsername(String managerUsername, int page, int size);
 
     LeaveResponse updateLeaveStatus(Long leaveId, UpdateLeaveStatusRequest request);
+
+    LeaveResponse reviewLeaveFromMail(Long leaveId, MailLeaveDecisionRequest request);
 
     LeaveResponse applyPartialStatus(Long leaveId, PartialLeaveStatusRequest request);
 

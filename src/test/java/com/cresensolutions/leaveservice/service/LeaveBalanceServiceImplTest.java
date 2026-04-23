@@ -69,4 +69,16 @@ class LeaveBalanceServiceImplTest {
 
         verify(employeeLeaveRepository).deductLeaveBalance(1L, "SICK_LEAVE", 0.5);
     }
+
+    @Test
+    void deductLeaveBalance_zeroDays_skips() {
+        service.deductLeaveBalance(1L, 1, 0.0);
+        verifyNoInteractions(leaveTypeRepository, employeeLeaveRepository);
+    }
+
+    @Test
+    void deductLeaveBalance_negativeDays_skips() {
+        service.deductLeaveBalance(1L, 1, -1.0);
+        verifyNoInteractions(leaveTypeRepository, employeeLeaveRepository);
+    }
 }

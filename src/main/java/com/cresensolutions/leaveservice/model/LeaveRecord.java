@@ -20,7 +20,6 @@ import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
-import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -56,10 +55,10 @@ public class LeaveRecord {
     private String trail = "[]";
 
     @Column(name = "created_at")
-    private LocalDate createdAt;
+    private OffsetDateTime createdAt;
 
     @Column(name = "updated_at")
-    private LocalDate updatedAt;
+    private OffsetDateTime updatedAt;
 
     @Column(name = "comments")
     private String comments;
@@ -75,6 +74,27 @@ public class LeaveRecord {
 
     @Column(name = "manager_approved_by")
     private String managerApprovedBy;
+
+    @Column(name = "manager_rejected_by")
+    private String managerRejectedBy;
+
+    @Column(name = "manager_approved_at")
+    private OffsetDateTime managerApprovedAt;
+
+    @Column(name = "manager_rejected_at")
+    private OffsetDateTime managerRejectedAt;
+
+    @Column(name = "admin_approved_by")
+    private String adminApprovedBy;
+
+    @Column(name = "admin_rejected_by")
+    private String adminRejectedBy;
+
+    @Column(name = "admin_approved_at")
+    private OffsetDateTime adminApprovedAt;
+
+    @Column(name = "admin_rejected_at")
+    private OffsetDateTime adminRejectedAt;
 
     @Column(name = "rejection_reason")
     private String rejectionReason;
@@ -113,14 +133,14 @@ public class LeaveRecord {
 
     @PrePersist
     void onCreate() {
-        LocalDate today = LocalDate.now();
-        if (createdAt == null) createdAt = today;
-        updatedAt = today;
+        OffsetDateTime now = OffsetDateTime.now();
+        if (createdAt == null) createdAt = now;
+        updatedAt = now;
     }
 
     @PreUpdate
     void onUpdate() {
-        updatedAt = LocalDate.now();
+        updatedAt = OffsetDateTime.now();
     }
 
     public Long getId() { return id; }
@@ -137,13 +157,20 @@ public class LeaveRecord {
     public String getEmailId() { return emailId; }
     public String getReason() { return reason; }
     public String getTrail() { return trail; }
-    public LocalDate getCreatedAt() { return createdAt; }
-    public LocalDate getUpdatedAt() { return updatedAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public String getComments() { return comments; }
     public boolean isEditable() { return editable; }
     public String getStatus() { return status; }
     public String getApprovedBy() { return approvedBy; }
     public String getManagerApprovedBy() { return managerApprovedBy; }
+    public String getManagerRejectedBy() { return managerRejectedBy; }
+    public OffsetDateTime getManagerApprovedAt() { return managerApprovedAt; }
+    public OffsetDateTime getManagerRejectedAt() { return managerRejectedAt; }
+    public String getAdminApprovedBy() { return adminApprovedBy; }
+    public String getAdminRejectedBy() { return adminRejectedBy; }
+    public OffsetDateTime getAdminApprovedAt() { return adminApprovedAt; }
+    public OffsetDateTime getAdminRejectedAt() { return adminRejectedAt; }
     public String getRejectionReason() { return rejectionReason; }
     public String getReminderSentFlags() { return reminderSentFlags; }
     public UserProfile getUser() { return user; }
@@ -205,15 +232,52 @@ public class LeaveRecord {
         }
     }
 
-    public void updateStatus(String status, String actorUsername, String rejectionReason) {
-        this.status = status;
-        this.approvedBy = actorUsername;
-        this.rejectionReason = rejectionReason;
-    }
-
     public void setManagerApproved(String managerUsername) {
         this.status = LeaveConstants.STATUS_MANAGER_APPROVED;
         this.managerApprovedBy = managerUsername;
+        this.managerRejectedBy = null;
+        this.managerApprovedAt = OffsetDateTime.now();
+        this.managerRejectedAt = null;
+        this.adminApprovedAt = null;
+        this.adminRejectedAt = null;
+        this.rejectionReason = null;
+        this.editable = false;
+    }
+
+    public void setManagerRejected(String managerUsername, String rejectionReason) {
+        this.status = LeaveConstants.STATUS_REJECTED;
+        this.managerRejectedBy = managerUsername;
+        this.managerApprovedBy = null;
+        this.managerRejectedAt = OffsetDateTime.now();
+        this.managerApprovedAt = null;
+        this.rejectionReason = rejectionReason;
+        this.approvedBy = null;
+        this.adminApprovedBy = null;
+        this.adminRejectedBy = null;
+        this.adminApprovedAt = null;
+        this.adminRejectedAt = null;
+        this.editable = false;
+    }
+
+    public void setAdminApproved(String adminUsername) {
+        this.status = LeaveConstants.STATUS_APPROVED;
+        this.adminApprovedBy = adminUsername;
+        this.approvedBy = adminUsername;
+        this.adminApprovedAt = OffsetDateTime.now();
+        this.adminRejectedBy = null;
+        this.adminRejectedAt = null;
+        this.rejectionReason = null;
+        this.editable = false;
+    }
+
+    public void setAdminRejected(String adminUsername, String rejectionReason) {
+        this.status = LeaveConstants.STATUS_REJECTED;
+        this.adminRejectedBy = adminUsername;
+        this.approvedBy = adminUsername;
+        this.adminRejectedAt = OffsetDateTime.now();
+        this.rejectionReason = rejectionReason;
+        this.adminApprovedBy = null;
+        this.adminApprovedAt = null;
         this.editable = false;
     }
 

@@ -30,9 +30,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.net.URLEncoder;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -101,6 +103,7 @@ public class HolidayServiceImpl implements HolidayService{
     @Service
     public static class LeaveEmailServiceImpl implements LeaveEmailService {
         private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd MMM yyyy");
+        private static final String DEFAULT_LOGIN_URL = "http://localhost:4200/login";
 
         private final EmailConfigurationRepository emailConfigRepo;
         private final EmailTemplateRepository emailTemplateRepo;
@@ -109,11 +112,11 @@ public class HolidayServiceImpl implements HolidayService{
         public LeaveEmailServiceImpl(
                 EmailConfigurationRepository emailConfigRepo,
                 EmailTemplateRepository emailTemplateRepo,
-                @Value("${app.login-url:http://localhost:3000/login}") String loginUrl
+                @Value("${app.login-url:http://localhost:4200/login}") String loginUrl
         ) {
             this.emailConfigRepo   = emailConfigRepo;
             this.emailTemplateRepo = emailTemplateRepo;
-            this.loginUrl          = loginUrl;
+            this.loginUrl          = (loginUrl == null || loginUrl.isBlank()) ? DEFAULT_LOGIN_URL : loginUrl;
         }
 
         @Override
@@ -121,11 +124,13 @@ public class HolidayServiceImpl implements HolidayService{
         public void sendManagerApprovedPendingAdminNotification(
                 List<String> adminRecipients, List<String> employeeRecipients,
                 String employeeName, String leaveType, List<LeaveDate> leaveDates,
-                String reason, String managerName) {
+                String reason, String managerName, Long leaveId) {
             EmailConfiguration config = resolveConfig();
             if (config == null) return;
             String datesTable = buildDatesTable(leaveDates);
-            // Notify admin for final approval
+            String approveUrl = buildMailDecisionUrl(leaveId, LeaveConstants.STATUS_APPROVED, LeaveConstants.ROLE_ADMIN);
+            String rejectUrl = buildMailDecisionUrl(leaveId, LeaveConstants.STATUS_REJECTED, LeaveConstants.ROLE_ADMIN);
+    
             if (hasRecipients(adminRecipients)) {
                 String subject = resolveSubject(LeaveConstants.TMPL_MANAGER_APPROVED_PENDING,
                         "Leave Approved by Manager – Awaiting Your Final Approval");
@@ -134,40 +139,77 @@ public class HolidayServiceImpl implements HolidayService{
                         .replace("{{leaveType}}", safe(leaveType))
                         .replace("{{reason}}", safe(reason))
                         .replace("{{managerName}}", safe(managerName))
-                        .replace("{{datesTable}}", datesTable);
+                        .replace("{{datesTable}}", datesTable)
+                        .replace("{{loginUrl}}", safe(this.loginUrl))
+                        .replace("{{approveUrl}}", safe(approveUrl))
+                        .replace("{{rejectUrl}}", safe(rejectUrl));
                 sendToAll(config, adminRecipients, subject, "Leave Pending Admin Approval", body);
             }
-            // Notify employee that manager approved, pending admin
             if (hasRecipients(employeeRecipients)) {
                 String subject = "Your leave request has been approved by your manager";
-                String body = "<p>Hi <strong>" + safe(employeeName) + "</strong>,</p>"
-                        + "<p>Your <strong>" + safe(leaveType) + "</strong> leave request has been approved by your manager <strong>"
-                        + safe(managerName) + "</strong> and is now pending final approval from the administrator.</p>"
-                        + "<p>You will receive another notification once the administrator makes a decision.</p>"
-                        + datesTable;
+                String body = "<p style=\"margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;\">Hello <strong>" + safe(employeeName) + "</strong>,</p>"
+                        + "<p style=\"margin:0 0 14px;color:#475569;font-size:14px;line-height:1.6;\">Your leave request has been <strong style=\"color:#0f8b8d;\">approved by your manager</strong> and is now awaiting final approval from the administrator.</p>"
+                        + "<div style=\"margin:0 0 16px;padding:12px 16px;border-radius:12px;background:#ecfdf5;border:1px solid #bbf7d0;\">"
+                        + "<span style=\"font-size:12px;font-weight:700;color:#0f8b8d;letter-spacing:0.06em;\">✅ MANAGER APPROVED – PENDING ADMIN FINAL APPROVAL</span>"
+                        + "</div>"
+                        + "<table role=\"presentation\" style=\"width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;\">"
+                        + "<tr><td style=\"width:36%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;\">Leave Type</td>"
+                        + "<td style=\"padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;\">" + safe(leaveType) + "</td></tr>"
+                        + "<tr><td style=\"padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;\">Approved By</td>"
+                        + "<td style=\"padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;\"><strong>" + safe(managerName) + "</strong> <span style=\"color:#64748b;font-size:12px;background:#f1f5f9;padding:2px 7px;border-radius:5px;margin-left:4px;\">Manager</span></td></tr>"
+                        + "</table>"
+                        + datesTable
+                        + "<div style=\"padding:12px 14px;border-radius:12px;background:#f0fdfa;border:1px solid #99f6e4;margin-bottom:4px;\">"
+                        + "<p style=\"margin:0;color:#0f766e;font-size:13px;line-height:1.6;\">You will receive another notification once the administrator makes a final decision.</p>"
+                        + "</div>";
                 sendToAll(config, employeeRecipients, subject, "Leave Pending Admin Approval", body);
             }
+        }
+
+        public void sendManagerApprovedPendingAdminNotification(
+                List<String> adminRecipients, List<String> employeeRecipients,
+                String employeeName, String leaveType, List<LeaveDate> leaveDates,
+                String reason, String managerName) {
+            sendManagerApprovedPendingAdminNotification(adminRecipients, employeeRecipients,
+                    employeeName, leaveType, leaveDates, reason, managerName, null);
         }
 
         @Override
         @Async
         public void sendPendingApprovalReminder(List<String> recipients, String employeeName,
-                                                String leaveType, List<LeaveDate> leaveDates, String reason,
-                                                String managerName, String managerRole, String loginUrl) {
+                                                String employeeRole, String leaveType,
+                                                List<LeaveDate> leaveDates, String reason,
+                                                String managerName, String managerRole, String loginUrl,
+                                                Long leaveId) {
             EmailConfiguration config = resolveConfig();
             if (config == null || !hasRecipients(recipients)) return;
             String datesTable = buildDatesTable(leaveDates);
             String effectiveLoginUrl = (loginUrl != null && !loginUrl.isBlank()) ? loginUrl : this.loginUrl;
+            String approveUrl = buildMailDecisionUrl(
+                    effectiveLoginUrl, leaveId, LeaveConstants.STATUS_APPROVED, "MANAGER_OR_ADMIN");
+            String rejectUrl = buildMailDecisionUrl(
+                    effectiveLoginUrl, leaveId, LeaveConstants.STATUS_REJECTED, "MANAGER_OR_ADMIN");
             String subject = resolveSubject(LeaveConstants.TMPL_PENDING_APPROVAL, "Leave Approval Required");
             String body = resolveBody(LeaveConstants.TMPL_PENDING_APPROVAL)
                     .replace("{{employeeName}}", safe(employeeName))
+                    .replace("{{employeeRole}}", safe(employeeRole))
                     .replace("{{managerName}}", safe(managerName))
                     .replace("{{managerRole}}", safe(managerRole))
                     .replace("{{leaveType}}", safe(leaveType))
                     .replace("{{reason}}", safe(reason))
                     .replace("{{datesTable}}", datesTable)
-                    .replace("{{loginUrl}}", safe(effectiveLoginUrl));
+                    .replace("{{loginUrl}}", safe(effectiveLoginUrl))
+                    .replace("{{approveUrl}}", safe(approveUrl))
+                    .replace("{{rejectUrl}}", safe(rejectUrl));
             sendToAll(config, recipients, subject, "Leave Approval Required", body);
+        }
+
+        public void sendPendingApprovalReminder(List<String> recipients, String employeeName,
+                                                String employeeRole, String leaveType,
+                                                List<LeaveDate> leaveDates, String reason,
+                                                String managerName, String managerRole, String loginUrl) {
+            sendPendingApprovalReminder(recipients, employeeName, employeeRole, leaveType,
+                    leaveDates, reason, managerName, managerRole, loginUrl, null);
         }
 
         @Override
@@ -189,7 +231,8 @@ public class HolidayServiceImpl implements HolidayService{
                     .replace("{{actionBy}}", safe(actionBy))
                     .replace("{{actionByRole}}", safe(actionByRole))
                     .replace("{{rejectionReason}}", safe(rejectionReason))
-                    .replace("{{datesTable}}", datesTable);
+                    .replace("{{datesTable}}", datesTable)
+                    .replace("{{loginUrl}}", safe(this.loginUrl));
             sendToAll(config, recipients, subject, "Leave " + statusLabel, body);
         }
 
@@ -290,9 +333,29 @@ public class HolidayServiceImpl implements HolidayService{
                     });
         }
 
+        private String buildMailDecisionUrl(Long leaveId, String decision, String expectedRole) {
+            return buildMailDecisionUrl(this.loginUrl, leaveId, decision, expectedRole);
+        }
+
+        private String buildMailDecisionUrl(String baseUrl, Long leaveId, String decision, String expectedRole) {
+            String effectiveBaseUrl = (baseUrl == null || baseUrl.isBlank()) ? DEFAULT_LOGIN_URL : baseUrl;
+            if (leaveId == null) {
+                return effectiveBaseUrl;
+            }
+            String separator = effectiveBaseUrl.contains("?") ? "&" : "?";
+            return effectiveBaseUrl + separator
+                    + "mailLeaveId=" + URLEncoder.encode(String.valueOf(leaveId), StandardCharsets.UTF_8)
+                    + "&mailDecision=" + URLEncoder.encode(decision, StandardCharsets.UTF_8)
+                    + "&mailRole=" + URLEncoder.encode(expectedRole, StandardCharsets.UTF_8);
+        }
+
         private void sendToAll(EmailConfiguration config, List<String> recipients,
                 String subject, String headerTitle, String bodyHtml) {
             try {
+                if (isDryRunMailConfig(config)) {
+                    log.info("[LeaveEmailService] Dry-run skip for '{}' to {} recipient(s)", subject, recipients.size());
+                    return;
+                }
                 JavaMailSender sender = buildSender(config);
                 MimeMessage message = sender.createMimeMessage();
                 MimeMessageHelper helper = new MimeMessageHelper(message, true, StandardCharsets.UTF_8.name());
@@ -306,6 +369,13 @@ public class HolidayServiceImpl implements HolidayService{
             } catch (MessagingException | MailException e) {
                 log.error("[LeaveEmailService] Failed to send '{}': {}", subject, e.getMessage(), e);
             }
+        }
+
+        private boolean isDryRunMailConfig(EmailConfiguration config) {
+            String host = safe(config.getHost()).trim();
+            String fromAddress = safe(config.getFromAddress()).trim().toLowerCase(Locale.ROOT);
+            return ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host))
+                    && fromAddress.endsWith(".local");
         }
 
         private JavaMailSender buildSender(EmailConfiguration config) {
@@ -329,15 +399,15 @@ public class HolidayServiceImpl implements HolidayService{
             return """
                     <!doctype html>
                     <html>
-                      <body style="margin:0;padding:24px;background:#eef4f8;font-family:Arial,'Helvetica Neue',sans-serif;">
-                        <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dbe4ee;border-radius:28px;overflow:hidden;box-shadow:0 24px 60px -40px rgba(15,23,42,0.45);">
-                          <div style="padding:28px 32px;background:linear-gradient(135deg,#f0fdfa,#fff7ed);border-bottom:1px solid #e2e8f0;">
+                      <body style="margin:0;padding:16px;background:#eef4f8;font-family:Arial,'Helvetica Neue',sans-serif;">
+                        <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #dbe4ee;border-radius:20px;overflow:hidden;box-shadow:0 16px 40px -30px rgba(15,23,42,0.35);">
+                          <div style="padding:20px 24px;background:linear-gradient(135deg,#f0fdfa,#fff7ed);border-bottom:1px solid #e2e8f0;">
                             %s
-                            <div style="margin-top:16px;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#0f766e;font-weight:700;">Cresen Solutions</div>
-                            <h1 style="margin:8px 0 0;color:#0f172a;font-size:28px;line-height:1.2;">%s</h1>
+                            <div style="margin-top:12px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#0f766e;font-weight:700;">Cresen Solutions</div>
+                            <h1 style="margin:6px 0 0;color:#0f172a;font-size:22px;line-height:1.2;">%s</h1>
                           </div>
-                          <div style="padding:28px 32px 30px;">%s</div>
-                          <div style="padding:18px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px;line-height:1.7;">
+                          <div style="padding:20px 24px 22px;">%s</div>
+                          <div style="padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#64748b;font-size:11px;line-height:1.7;">
                             Cresen Solutions LLC<br>This is an automated email from the Leave Management System.
                           </div>
                         </div>

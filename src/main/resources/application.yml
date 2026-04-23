@@ -71,4 +71,4 @@ springdoc:
   packages-to-scan: com.cresensolutions.leaveservice
 
 app:
-  login-url: http://localhost:8081/login
+  login-url: ${FRONTEND_LOGIN_URL:http://localhost:4200/login}

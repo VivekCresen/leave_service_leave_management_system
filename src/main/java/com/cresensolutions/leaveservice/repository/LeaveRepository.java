@@ -114,4 +114,16 @@ public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
 
     @Query(value = "SELECT COUNT(*) > 0 FROM leave_schema.leave_application WHERE user_id = :userId", nativeQuery = true)
     boolean existsByUserId(@Param("userId") Long userId);
+
+    @Query(value = """
+            SELECT COALESCE(SUM(
+                CASE WHEN ld.day_type LIKE '%HALF%' THEN 0.5 ELSE 1.0 END
+            ), 0)
+            FROM leave_schema.leave_dates ld
+            INNER JOIN leave_schema.leave_application l ON ld.leave_application_id = l.id
+            WHERE l.user_id = :userId
+              AND l.leave_type_id = :leaveTypeId
+              AND UPPER(COALESCE(l.status, 'PENDING')) = 'APPROVED'
+            """, nativeQuery = true)
+    Double sumApprovedLeaveDays(@Param("userId") Long userId, @Param("leaveTypeId") Integer leaveTypeId);
 }

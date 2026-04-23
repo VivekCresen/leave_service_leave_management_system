@@ -7,6 +7,8 @@ import com.cresensolutions.leaveservice.repository.*;
 import com.cresensolutions.leaveservice.service.Impl.LeaveServiceImpl;
 import com.cresensolutions.leaveservice.common.LeaveConstants;
 import org.flowable.engine.delegate.DelegateExecution;
+import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -209,6 +211,45 @@ class LeaveServiceImplTest {
     }
 
     @Test
+    void createLeave_requestedDaysExceedRemainingBalance_throwsIllegalArgument() {
+        CreateLeaveRequest req = new CreateLeaveRequest(
+                1L, null, 1,
+                List.of(new LeaveDateDto(LocalDate.now(), "FULL")),
+                "Vacation", null, null, null, null);
+
+        when(userProfileRepository.findById(1L)).thenReturn(Optional.of(activeUser));
+        when(leaveTypeRepository.findById(1)).thenReturn(Optional.of(leaveType));
+        when(employeeLeaveRepository.getRemainingBalance(1L, "ANNUAL_LEAVE")).thenReturn(0.5);
+
+        assertThatThrownBy(() -> leaveService.createLeave(req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds remaining")
+                .hasMessageContaining("1.0")
+                .hasMessageContaining("0.5");
+    }
+
+    @Test
+    void createLeave_halfDayWithinRemainingBalance_succeeds() {
+        CreateLeaveRequest req = new CreateLeaveRequest(
+                1L, null, 1,
+                List.of(new LeaveDateDto(LocalDate.now(), "MORNING_HALF")),
+                "Vacation", null, null, null, null);
+
+        when(userProfileRepository.findById(1L)).thenReturn(Optional.of(activeUser));
+        when(leaveTypeRepository.findById(1)).thenReturn(Optional.of(leaveType));
+        when(employeeLeaveRepository.getRemainingBalance(1L, "ANNUAL_LEAVE")).thenReturn(0.5);
+        when(leaveRepository.save(any())).thenReturn(leaveRecord);
+        when(leaveDateRepository.saveAll(any())).thenReturn(List.of());
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        LeaveResponse response = leaveService.createLeave(req);
+
+        assertThat(response).isNotNull();
+        verify(leaveRepository, atLeastOnce()).save(any(LeaveRecord.class));
+    }
+
+    @Test
     void createLeave_withNotifyUsers_savesNotifyUsers() throws Exception {
         UserProfile notifyUser = new UserProfile();
         setField(notifyUser, "id", 2L);
@@ -399,6 +440,178 @@ class LeaveServiceImplTest {
                 .hasMessageContaining("Leave not found with id: 99");
     }
 
+    @Test
+    void updateLeaveStatus_managerApproved_withFlowableTask_completesManagerTask() throws Exception {
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("manager1", "MANAGER_APPROVED", null);
+        Task managerTask = mock(Task.class);
+        TaskQuery taskQuery = mock(TaskQuery.class);
+
+        when(managerTask.getId()).thenReturn("task-manager-1");
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord), Optional.of(leaveRecord));
+        when(taskService.createTaskQuery()).thenReturn(taskQuery);
+        when(taskQuery.processInstanceBusinessKey("10")).thenReturn(taskQuery);
+        when(taskQuery.taskDefinitionKey("task_manager_approval")).thenReturn(taskQuery);
+        when(taskQuery.singleResult()).thenReturn(managerTask);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        LeaveResponse response = leaveService.updateLeaveStatus(10L, req);
+
+        assertThat(response).isNotNull();
+        verify(taskService).complete(eq("task-manager-1"), ArgumentMatchers.<Map<String, Object>>argThat(vars ->
+                "manager1".equals(vars.get("actorUsername")) && "APPROVED".equals(vars.get("status"))));
+        verify(leaveRepository, never()).save(any(LeaveRecord.class));
+    }
+
+    @Test
+    void updateLeaveStatus_unsupportedStatus_throwsIllegalArgument() {
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("manager1", "ON_HOLD", null);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        assertThatThrownBy(() -> leaveService.updateLeaveStatus(10L, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported status: ON_HOLD");
+    }
+
+    @Test
+    void reviewLeaveFromMail_managerApprove_pendingLeave_returnsManagerApproved() throws Exception {
+        UserProfile manager = new UserProfile();
+        setField(manager, "id", 2L);
+        setField(manager, "userName", "manager1");
+        setField(manager, "active", true);
+        setField(manager, "role", "MANAGER");
+
+        MailLeaveDecisionRequest request = new MailLeaveDecisionRequest("manager1", "APPROVED", null);
+        Task task = mock(Task.class);
+        TaskQuery taskQuery = mock(TaskQuery.class);
+
+        when(task.getId()).thenReturn("mail-manager-task");
+        when(task.getAssignee()).thenReturn("manager1");
+        when(userProfileRepository.findByUserNameIgnoreCase("manager1")).thenReturn(Optional.of(manager));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord), Optional.of(leaveRecord));
+        when(taskService.createTaskQuery()).thenReturn(taskQuery);
+        when(taskQuery.processInstanceBusinessKey("10")).thenReturn(taskQuery);
+        when(taskQuery.taskDefinitionKey("task_manager_approval")).thenReturn(taskQuery);
+        when(taskQuery.singleResult()).thenReturn(task);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        LeaveResponse response = leaveService.reviewLeaveFromMail(10L, request);
+
+        assertThat(response).isNotNull();
+        verify(taskService).complete(eq("mail-manager-task"), ArgumentMatchers.<Map<String, Object>>argThat(vars ->
+                "manager1".equals(vars.get("actorUsername")) && "APPROVED".equals(vars.get("status"))));
+    }
+
+    @Test
+    void reviewLeaveFromMail_adminReject_managerApprovedLeave_defaultsReason() throws Exception {
+        UserProfile admin = new UserProfile();
+        setField(admin, "id", 3L);
+        setField(admin, "userName", "admin1");
+        setField(admin, "active", true);
+        setField(admin, "role", "ADMIN");
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+
+        MailLeaveDecisionRequest request = new MailLeaveDecisionRequest("admin1", "REJECTED", "  ");
+        Task task = mock(Task.class);
+        TaskQuery taskQuery = mock(TaskQuery.class);
+
+        when(task.getId()).thenReturn("mail-admin-task");
+        when(userProfileRepository.findByUserNameIgnoreCase("admin1")).thenReturn(Optional.of(admin));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord), Optional.of(leaveRecord));
+        when(taskService.createTaskQuery()).thenReturn(taskQuery);
+        when(taskQuery.processInstanceBusinessKey("10")).thenReturn(taskQuery);
+        when(taskQuery.taskDefinitionKey("task_admin_approval")).thenReturn(taskQuery);
+        when(taskQuery.singleResult()).thenReturn(task);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        LeaveResponse response = leaveService.reviewLeaveFromMail(10L, request);
+
+        assertThat(response).isNotNull();
+        verify(taskService).complete(eq("mail-admin-task"), ArgumentMatchers.<Map<String, Object>>argThat(vars ->
+                "admin1".equals(vars.get("actorUsername"))
+                        && "REJECTED".equals(vars.get("status"))
+                        && "Rejected from email approval link.".equals(vars.get("rejectionReason"))));
+    }
+
+    @Test
+    void reviewLeaveFromMail_inactiveActor_throwsIllegalArgument() throws Exception {
+        UserProfile inactiveManager = new UserProfile();
+        setField(inactiveManager, "userName", "manager1");
+        setField(inactiveManager, "active", false);
+        setField(inactiveManager, "role", "MANAGER");
+
+        when(userProfileRepository.findByUserNameIgnoreCase("manager1")).thenReturn(Optional.of(inactiveManager));
+
+        assertThatThrownBy(() -> leaveService.reviewLeaveFromMail(
+                10L, new MailLeaveDecisionRequest("manager1", "APPROVED", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Inactive users cannot approve or reject leave requests");
+    }
+
+    @Test
+    void reviewLeaveFromMail_managerAssignedToSomeoneElse_throwsIllegalArgument() throws Exception {
+        UserProfile manager = new UserProfile();
+        setField(manager, "id", 2L);
+        setField(manager, "userName", "manager1");
+        setField(manager, "active", true);
+        setField(manager, "role", "MANAGER");
+
+        MailLeaveDecisionRequest request = new MailLeaveDecisionRequest("manager1", "APPROVED", null);
+        Task task = mock(Task.class);
+        TaskQuery taskQuery = mock(TaskQuery.class);
+
+        when(task.getAssignee()).thenReturn("other_manager");
+        when(userProfileRepository.findByUserNameIgnoreCase("manager1")).thenReturn(Optional.of(manager));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(taskService.createTaskQuery()).thenReturn(taskQuery);
+        when(taskQuery.processInstanceBusinessKey("10")).thenReturn(taskQuery);
+        when(taskQuery.taskDefinitionKey("task_manager_approval")).thenReturn(taskQuery);
+        when(taskQuery.singleResult()).thenReturn(task);
+
+        assertThatThrownBy(() -> leaveService.reviewLeaveFromMail(10L, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("assigned to other_manager");
+    }
+
+    @Test
+    void reviewLeaveFromMail_nonAdminOnManagerApprovedLeave_throwsIllegalArgument() throws Exception {
+        UserProfile manager = new UserProfile();
+        setField(manager, "id", 2L);
+        setField(manager, "userName", "manager1");
+        setField(manager, "active", true);
+        setField(manager, "role", "MANAGER");
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+
+        when(userProfileRepository.findByUserNameIgnoreCase("manager1")).thenReturn(Optional.of(manager));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        assertThatThrownBy(() -> leaveService.reviewLeaveFromMail(
+                10L, new MailLeaveDecisionRequest("manager1", "APPROVED", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Only an ADMIN can give final approval");
+    }
+
+    @Test
+    void reviewLeaveFromMail_alreadyApprovedLeave_throwsIllegalArgument() throws Exception {
+        UserProfile admin = new UserProfile();
+        setField(admin, "id", 3L);
+        setField(admin, "userName", "admin1");
+        setField(admin, "active", true);
+        setField(admin, "role", "ADMIN");
+        setField(leaveRecord, "status", "APPROVED");
+
+        when(userProfileRepository.findByUserNameIgnoreCase("admin1")).thenReturn(Optional.of(admin));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        assertThatThrownBy(() -> leaveService.reviewLeaveFromMail(
+                10L, new MailLeaveDecisionRequest("admin1", "REJECTED", "late")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("already APPROVED");
+    }
+
 
     @Test
     void updateLeave_success() {
@@ -408,6 +621,7 @@ class LeaveServiceImplTest {
 
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveTypeRepository.findById(1)).thenReturn(Optional.of(leaveType));
+        when(employeeLeaveRepository.getRemainingBalance(1L, "ANNUAL_LEAVE")).thenReturn(10.0);
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.saveAll(any())).thenReturn(List.of());
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
@@ -456,6 +670,23 @@ class LeaveServiceImplTest {
         assertThatThrownBy(() -> leaveService.updateLeave(10L, req))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Leave type not found with id: 99");
+    }
+
+    @Test
+    void updateLeave_requestedDaysExceedRemainingBalance_throwsIllegalArgument() {
+        UpdateLeaveRequest req = new UpdateLeaveRequest(
+                1, List.of(new LeaveDateDto(LocalDate.now(), "FULL")),
+                "reason", null, null, null);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveTypeRepository.findById(1)).thenReturn(Optional.of(leaveType));
+        when(employeeLeaveRepository.getRemainingBalance(1L, "ANNUAL_LEAVE")).thenReturn(0.5);
+
+        assertThatThrownBy(() -> leaveService.updateLeave(10L, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("exceeds remaining")
+                .hasMessageContaining("1.0")
+                .hasMessageContaining("0.5");
     }
 
 
@@ -755,6 +986,256 @@ class LeaveServiceImplTest {
     }
 
 
+    // ─── resolveActorDisplayName / resolveActorRoleDisplay / resolveRoleDisplay ────
+
+    @Test
+    void updateLeaveStatus_approved_actorWithFullName_usesFullNameInEmail() throws Exception {
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("admin1", "APPROVED", null);
+
+        UserProfile admin = new UserProfile();
+        setField(admin, "userName", "admin1");
+        setField(admin, "fullName", "Admin One");
+        setField(admin, "role", "ADMIN");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveRepository.save(any())).thenReturn(leaveRecord);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+        when(userProfileRepository.findByUserName("admin1")).thenReturn(Optional.of(admin));
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(leaveTaskExecutor).execute(any(Runnable.class));
+
+        leaveService.updateLeaveStatus(10L, req);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                any(), any(), any(), any(), any(), eq("APPROVED"),
+                eq("Admin One"), eq("Administrator"), any());
+    }
+
+    @Test
+    void updateLeaveStatus_approved_actorNotFound_usesUsernameAsDisplayName() throws Exception {
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("ghost_admin", "APPROVED", null);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveRepository.save(any())).thenReturn(leaveRecord);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+        when(userProfileRepository.findByUserName("ghost_admin")).thenReturn(Optional.empty());
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(leaveTaskExecutor).execute(any(Runnable.class));
+
+        leaveService.updateLeaveStatus(10L, req);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                any(), any(), any(), any(), any(), eq("APPROVED"),
+                eq("ghost_admin"), eq(""), any());
+    }
+
+    @Test
+    void updateLeaveStatus_approved_actorWithNullFullName_usesUsernameAsDisplayName() throws Exception {
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("admin1", "APPROVED", null);
+
+        UserProfile admin = new UserProfile();
+        setField(admin, "userName", "admin1");
+        setField(admin, "fullName", null);
+        setField(admin, "role", "EMPLOYEE");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveRepository.save(any())).thenReturn(leaveRecord);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+        when(userProfileRepository.findByUserName("admin1")).thenReturn(Optional.of(admin));
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(leaveTaskExecutor).execute(any(Runnable.class));
+
+        leaveService.updateLeaveStatus(10L, req);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                any(), any(), any(), any(), any(), eq("APPROVED"),
+                eq("admin1"), eq("Employee"), any());
+    }
+
+    @Test
+    void updateLeaveStatus_approved_actorWithManagerRole_displaysManager() throws Exception {
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("mgr1", "APPROVED", null);
+
+        UserProfile mgr = new UserProfile();
+        setField(mgr, "userName", "mgr1");
+        setField(mgr, "fullName", "Manager One");
+        setField(mgr, "role", "MANAGER");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveRepository.save(any())).thenReturn(leaveRecord);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+        when(userProfileRepository.findByUserName("mgr1")).thenReturn(Optional.of(mgr));
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(leaveTaskExecutor).execute(any(Runnable.class));
+
+        leaveService.updateLeaveStatus(10L, req);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                any(), any(), any(), any(), any(), eq("APPROVED"),
+                eq("Manager One"), eq("Manager"), any());
+    }
+
+    @Test
+    void updateLeaveStatus_approved_actorWithUnknownRole_displaysCapitalized() throws Exception {
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+        UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("actor1", "APPROVED", null);
+
+        UserProfile actor = new UserProfile();
+        setField(actor, "userName", "actor1");
+        setField(actor, "fullName", "Actor One");
+        setField(actor, "role", "SUPERVISOR");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveRepository.save(any())).thenReturn(leaveRecord);
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+        when(userProfileRepository.findByUserName("actor1")).thenReturn(Optional.of(actor));
+        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
+                .when(leaveTaskExecutor).execute(any(Runnable.class));
+
+        leaveService.updateLeaveStatus(10L, req);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                any(), any(), any(), any(), any(), eq("APPROVED"),
+                eq("Actor One"), eq("Supervisor"), any());
+    }
+
+    // ─── normalizeUniqueName / trimOrNull / normalizeGender via createLeaveType ──
+
+    @Test
+    void createLeaveType_withSpacesInUniqueName_normalizesToUpperUnderscore() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Sick Leave", "sick leave", "desc", 10, null);
+
+        when(leaveTypeRepository.findConflicts(any(), any())).thenReturn(List.of());
+        when(leaveTypeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.createLeaveType(req);
+
+        assertThat(response.leaveUniqueName()).isEqualTo("SICK_LEAVE");
+    }
+
+    @Test
+    void createLeaveType_blankUniqueName_throwsIllegalArgument() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Sick Leave", "  ", "desc", 10, null);
+
+        assertThatThrownBy(() -> leaveService.createLeaveType(req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Leave unique name is required");
+    }
+
+    @Test
+    void createLeaveType_withBlankDescription_savesNullDescription() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Sick Leave", "SICK_LEAVE", "   ", 10, null);
+
+        when(leaveTypeRepository.findConflicts(any(), any())).thenReturn(List.of());
+        when(leaveTypeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.createLeaveType(req);
+
+        assertThat(response.description()).isNull();
+    }
+
+    @Test
+    void createLeaveType_withFemaleGenderRestriction_normalizesToFEMALE() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Maternity", "MATERNITY", null, 90, "female");
+
+        when(leaveTypeRepository.findConflicts(any(), any())).thenReturn(List.of());
+        when(leaveTypeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.createLeaveType(req);
+
+        assertThat(response.genderRestriction()).isEqualTo("FEMALE");
+    }
+
+    @Test
+    void createLeaveType_withMaleGenderRestriction_normalizesToMALE() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Paternity", "PATERNITY", null, 15, "male");
+
+        when(leaveTypeRepository.findConflicts(any(), any())).thenReturn(List.of());
+        when(leaveTypeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.createLeaveType(req);
+
+        assertThat(response.genderRestriction()).isEqualTo("MALE");
+    }
+
+    @Test
+    void createLeaveType_withInvalidGenderRestriction_savesNull() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Other Leave", "OTHER_LEAVE", null, 5, "OTHER");
+
+        when(leaveTypeRepository.findConflicts(any(), any())).thenReturn(List.of());
+        when(leaveTypeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.createLeaveType(req);
+
+        assertThat(response.genderRestriction()).isNull();
+    }
+
+    @Test
+    void createLeaveType_withNullGenderRestriction_savesNull() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "Annual Leave", "ANNUAL_LEAVE_2", null, 20, null);
+
+        when(leaveTypeRepository.findConflicts(any(), any())).thenReturn(List.of());
+        when(leaveTypeRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        LeaveTypeResponse response = leaveService.createLeaveType(req);
+
+        assertThat(response.genderRestriction()).isNull();
+    }
+
+    @Test
+    void updateLeaveType_conflictOnUniqueName_throwsIllegalArgument() {
+        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
+                "New Leave", "ANNUAL_LEAVE", null, 5, null);
+
+        LeaveType conflict = new LeaveType("Annual Leave", "ANNUAL_LEAVE", null, 20, null);
+        when(leaveTypeRepository.findById(1)).thenReturn(Optional.of(leaveType));
+        when(leaveTypeRepository.findConflictsForUpdate(eq(1), any(), any())).thenReturn(List.of(conflict));
+
+        assertThatThrownBy(() -> leaveService.updateLeaveType(1, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("already exists");
+    }
+
+    // ─── sendLeaveStatusMail — null actorUsername uses system display name ────────
+
+    @Test
+    void sendLeaveStatusMail_nullActorUsername_usesSystemDisplayName() {
+        DelegateExecution execution = mock(DelegateExecution.class);
+        when(execution.getVariable("leaveId")).thenReturn(10L);
+        when(execution.getVariable("status")).thenReturn("APPROVED");
+        when(execution.getVariable("employeeName")).thenReturn("John");
+        when(execution.getVariable("leaveType")).thenReturn("Annual Leave");
+        when(execution.getVariable("reason")).thenReturn("Vacation");
+        when(execution.getVariable("actorUsername")).thenReturn(null);
+        when(execution.getVariable("rejectionReason")).thenReturn(null);
+
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        leaveService.sendLeaveStatusMail(execution);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                any(), eq("John"), any(), any(), any(), eq("APPROVED"),
+                any(), any(), any());
+    }
+
     private static void setField(Object target, String fieldName, Object value) throws Exception {
         Class<?> clazz = target.getClass();
         while (clazz != null) {
@@ -968,7 +1449,7 @@ class LeaveServiceImplTest {
         leaveService.notifyAdminForFinalApproval(execution);
 
         verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(
-                any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), anyLong());
     }
 
     @Test
@@ -1258,7 +1739,7 @@ class LeaveServiceImplTest {
         assertThat(response).isNotNull();
         // rejected date should be deleted
         verify(leaveDateRepository).deleteAllById(any());
-        verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(any(), any(), any(), any(), any(), any(), any());
+        verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(any(), any(), any(), any(), any(), any(), any(), anyLong());
     }
 
     @Test
@@ -1329,7 +1810,7 @@ class LeaveServiceImplTest {
         LeaveResponse response = leaveService.updateLeaveStatus(10L, req);
         assertThat(response).isNotNull();
         verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(
-                any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), anyLong());
     }
 
     // ─── resolveActorDisplayName / resolveActorRoleDisplay branches ───────────────
@@ -1448,16 +1929,6 @@ class LeaveServiceImplTest {
 
         LeaveTypeResponse response = leaveService.createLeaveType(req);
         assertThat(response).isNotNull();
-    }
-
-    @Test
-    void createLeaveType_blankUniqueName_throwsIllegalArgument() {
-        CreateLeaveTypeRequest req = new CreateLeaveTypeRequest(
-                "Some Leave", "  ", null, 5, null);
-
-        assertThatThrownBy(() -> leaveService.createLeaveType(req))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Leave unique name is required");
     }
 
     // ─── toLeaveResponse — null user branch ───────────────────────────────────────

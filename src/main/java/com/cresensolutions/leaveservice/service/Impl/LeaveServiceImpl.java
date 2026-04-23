@@ -437,9 +437,6 @@ public class LeaveServiceImpl implements LeaveService {
                 leave.appendTrailEntry(LeaveConstants.STATUS_REJECTED, request.actorUsername(), null, null,
                         "All dates rejected by manager " + request.actorUsername()
                         + (request.rejectionReason() != null ? ". Reason: " + request.rejectionReason() : ""));
-                if (!rejectedDates.isEmpty()) {
-                    leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
-                }
                 LeaveRecord saved = leaveRepository.save(leave);
                 leaveEmailService.sendLeaveStatusNotification(
                         resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
@@ -482,11 +479,9 @@ public class LeaveServiceImpl implements LeaveService {
             return toLeaveResponse(saved);
 
         } else {
-            // ── ADMIN final partial review ──────────────────────────────────────
-            // Admin gives final decision on remaining dates
             String overallStatus = allRejected ? LeaveConstants.STATUS_REJECTED : LeaveConstants.STATUS_APPROVED;
 
-            if (!rejectedDates.isEmpty()) {
+            if (!allRejected && !rejectedDates.isEmpty()) {
                 leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
             }
             if (LeaveConstants.STATUS_APPROVED.equals(overallStatus)) {

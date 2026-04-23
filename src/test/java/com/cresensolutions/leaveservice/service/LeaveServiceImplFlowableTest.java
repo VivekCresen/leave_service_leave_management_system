@@ -251,8 +251,51 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.resolveApprover(execution);
 
-        verify(leaveEmailService).sendPendingApprovalReminder(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(leaveEmailService).sendPendingApprovalReminder(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong());
         verify(leaveRepository).save(leaveRecord);
+    }
+
+    @Test
+    void resolveApprover_withManagerProfile_usesManagerDisplayNameAndRole() {
+        UserProfile manager = new UserProfile();
+        setFieldSafe(manager, "id", 2L);
+        setFieldSafe(manager, "userName", "manager1");
+        setFieldSafe(manager, "fullName", "Manager One");
+        setFieldSafe(manager, "emailId", "manager@cresensolutions.com");
+        setFieldSafe(manager, "active", true);
+        setFieldSafe(manager, "role", "MANAGER");
+
+        UserProfile admin = new UserProfile();
+        setFieldSafe(admin, "id", 3L);
+        setFieldSafe(admin, "userName", "admin1");
+        setFieldSafe(admin, "emailId", "admin@cresensolutions.com");
+
+        DelegateExecution execution = mock(DelegateExecution.class);
+        when(execution.getVariable("userId")).thenReturn(1L);
+        when(execution.getVariable("username")).thenReturn("john");
+        when(execution.getVariable("leaveId")).thenReturn(10L);
+        when(execution.getProcessInstanceId()).thenReturn("proc-1");
+
+        when(userProfileRepository.findById(1L)).thenReturn(Optional.of(activeUser));
+        when(userProfileRepository.findByUserNameIgnoreCase("manager1")).thenReturn(Optional.of(manager));
+        when(userProfileRepository.findByUserName("manager1")).thenReturn(Optional.of(manager));
+        when(userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN)).thenReturn(List.of(admin));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+
+        leaveService.resolveApprover(execution);
+
+        verify(leaveEmailService).sendPendingApprovalReminder(
+                any(),
+                eq("John Doe"),
+                eq("Employee"),
+                any(),
+                any(),
+                any(),
+                eq("Manager One"),
+                eq("Manager"),
+                any(),
+                eq(10L));
     }
 
     @Test
@@ -636,6 +679,40 @@ class LeaveServiceImplFlowableTest {
                 argThat(r -> r.contains("john@cresensolutions.com")),
                 eq("John Doe"), eq("Annual Leave"), eq(List.of(ld)),
                 eq("Vacation"), eq("APPROVED"), eq("manager1"), any(), isNull());
+    }
+
+    @Test
+    void sendLeaveStatusMail_includesTrimmedNotifyRecipients() {
+        LeaveDate ld = new LeaveDate(leaveRecord, LocalDate.now(), "FULL");
+        LeaveNotifyUser notifyUser = mock(LeaveNotifyUser.class);
+        when(notifyUser.getUserEmail()).thenReturn("  jane@cresensolutions.com  ");
+
+        DelegateExecution execution = mock(DelegateExecution.class);
+        when(execution.getVariable("leaveId")).thenReturn(10L);
+        when(execution.getVariable("status")).thenReturn("APPROVED");
+        when(execution.getVariable("employeeName")).thenReturn("John Doe");
+        when(execution.getVariable("leaveType")).thenReturn("Annual Leave");
+        when(execution.getVariable("reason")).thenReturn("Vacation");
+        when(execution.getVariable("actorUsername")).thenReturn("manager1");
+        when(execution.getVariable("rejectionReason")).thenReturn(null);
+
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of(ld));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of(notifyUser));
+
+        leaveService.sendLeaveStatusMail(execution);
+
+        verify(leaveEmailService).sendLeaveStatusNotification(
+                argThat(recipients -> recipients.contains("john@cresensolutions.com")
+                        && recipients.contains("jane@cresensolutions.com")),
+                eq("John Doe"),
+                eq("Annual Leave"),
+                eq(List.of(ld)),
+                eq("Vacation"),
+                eq("APPROVED"),
+                eq("manager1"),
+                any(),
+                isNull());
     }
 
     @Test

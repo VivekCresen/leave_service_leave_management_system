@@ -8,6 +8,7 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveDateDto;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.MailLeaveDecisionRequest;
 import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
@@ -37,6 +38,7 @@ import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskQuery;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -132,14 +134,7 @@ public class LeaveServiceImpl implements LeaveService {
 
         validateGenderRestriction(leaveType, user);
 
-        String leaveUniqueName = leaveType.getLeaveUniqueName();
-        if (leaveUniqueName != null && !leaveUniqueName.isBlank()) {
-            Double remaining = employeeLeaveRepository.getRemainingBalance(user.getId(), leaveUniqueName);
-            if (remaining != null && remaining <= 0) {
-                throw new IllegalArgumentException(
-                        "You have no remaining " + leaveType.getLeaveName() + " balance.");
-            }
-        }
+        validateRequestedLeaveBalance(user, leaveType, request.leaveDates());
 
         LeaveRecord leave = new LeaveRecord(
                 user, leaveType,
@@ -250,7 +245,7 @@ public class LeaveServiceImpl implements LeaveService {
             leaveEmailService.sendManagerApprovedPendingAdminNotification(
                     adminEmails, resolveStatusRecipients(leave), employeeName,
                     leave.getLeaveType(), dates, leave.getReason(),
-                    resolveActorDisplayName(request.actorUsername()));
+                    resolveActorDisplayName(request.actorUsername()), leaveId);
 
             return leaveRepository.findDetailedById(leaveId)
                     .map(this::toLeaveResponse)
@@ -275,7 +270,7 @@ public class LeaveServiceImpl implements LeaveService {
                         .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
             }
 
-            leave.updateStatus(status, request.actorUsername(), null);
+            leave.setAdminApproved(request.actorUsername());
             leave.appendTrailEntry(status, request.actorUsername(), null, null,
                     "Final approval by admin " + request.actorUsername());
             LeaveRecord saved = leaveRepository.save(leave);
@@ -323,7 +318,11 @@ public class LeaveServiceImpl implements LeaveService {
                         .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
             }
 
-            leave.updateStatus(status, request.actorUsername(), request.rejectionReason());
+            if (LeaveConstants.STATUS_MANAGER_APPROVED.equalsIgnoreCase(leave.getStatus())) {
+                leave.setAdminRejected(request.actorUsername(), request.rejectionReason());
+            } else {
+                leave.setManagerRejected(request.actorUsername(), request.rejectionReason());
+            }
             leave.appendTrailEntry(status, request.actorUsername(), null, null,
                     "Rejected by " + request.actorUsername() + ". Reason: " + request.rejectionReason());
             LeaveRecord saved = leaveRepository.save(leave);
@@ -342,6 +341,53 @@ public class LeaveServiceImpl implements LeaveService {
         }
 
         throw new IllegalArgumentException("Unsupported status: " + status);
+    }
+
+    @Override
+    @Transactional
+    public LeaveResponse reviewLeaveFromMail(Long leaveId, MailLeaveDecisionRequest request) {
+        UserProfile actor = userProfileRepository.findByUserNameIgnoreCase(
+                        requireNonBlank(request.actorUsername(), "Please login before approving or rejecting leave."))
+                .orElseThrow(() -> new IllegalArgumentException("Please login before approving or rejecting leave."));
+        if (!actor.isActive()) {
+            throw new IllegalArgumentException("Inactive users cannot approve or reject leave requests.");
+        }
+
+        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
+                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+
+        String role = actor.getRole() == null ? "" : actor.getRole().trim().toUpperCase();
+        String currentStatus = leave.getStatus() == null ? LeaveConstants.STATUS_PENDING : leave.getStatus().toUpperCase();
+        String decision = request.decision().trim().toUpperCase();
+        String targetStatus;
+
+        if (LeaveConstants.STATUS_PENDING.equals(currentStatus)) {
+            validateManagerMailDecision(leaveId, actor, role);
+            targetStatus = LeaveConstants.STATUS_APPROVED.equals(decision)
+                    ? LeaveConstants.STATUS_MANAGER_APPROVED
+                    : LeaveConstants.STATUS_REJECTED;
+        } else if (LeaveConstants.STATUS_MANAGER_APPROVED.equals(currentStatus)) {
+            if (!LeaveConstants.ROLE_ADMIN.equals(role)) {
+                throw new IllegalArgumentException("Only an ADMIN can give final approval or rejection for this leave.");
+            }
+            targetStatus = LeaveConstants.STATUS_APPROVED.equals(decision)
+                    ? LeaveConstants.STATUS_APPROVED
+                    : LeaveConstants.STATUS_REJECTED;
+        } else {
+            throw new IllegalArgumentException("This leave request is already " + currentStatus + " and cannot be changed from email.");
+        }
+
+        String rejectionReason = request.rejectionReason();
+        if (LeaveConstants.STATUS_REJECTED.equals(targetStatus)
+                && (rejectionReason == null || rejectionReason.isBlank())) {
+            rejectionReason = "Rejected from email approval link.";
+        }
+
+        return updateLeaveStatus(leaveId, new UpdateLeaveStatusRequest(
+                actor.getUserName(),
+                targetStatus,
+                rejectionReason
+        ));
     }
 
     @Override
@@ -387,7 +433,7 @@ public class LeaveServiceImpl implements LeaveService {
             // If manager rejects all → REJECTED immediately (no admin step needed)
             // If manager approves any → MANAGER_APPROVED → goes to admin for final decision
             if (allRejected) {
-                leave.updateStatus(LeaveConstants.STATUS_REJECTED, request.actorUsername(), request.rejectionReason());
+                leave.setManagerRejected(request.actorUsername(), request.rejectionReason());
                 leave.appendTrailEntry(LeaveConstants.STATUS_REJECTED, request.actorUsername(), null, null,
                         "All dates rejected by manager " + request.actorUsername()
                         + (request.rejectionReason() != null ? ". Reason: " + request.rejectionReason() : ""));
@@ -417,10 +463,22 @@ public class LeaveServiceImpl implements LeaveService {
             List<LeaveDate> remainingDates = leaveDateRepository.findByApplicationId(leaveId);
             List<String> adminEmails = userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN).stream()
                     .map(UserProfile::getEmailId).filter(e -> e != null && !e.isBlank()).toList();
+            String managerDisplayName = resolveActorDisplayName(request.actorUsername());
+
+            // Notify admin + employee (pending admin approval) with approved dates
             leaveEmailService.sendManagerApprovedPendingAdminNotification(
                     adminEmails, resolveStatusRecipients(saved), employeeName,
-                    saved.getLeaveType(), remainingDates, saved.getReason(),
-                    resolveActorDisplayName(request.actorUsername()));
+                    saved.getLeaveType(), remainingDates, saved.getReason(), managerDisplayName, leaveId);
+
+            // If manager partially rejected some dates, immediately notify employee about those
+            if (!rejectedDates.isEmpty()) {
+                leaveEmailService.sendLeaveStatusNotification(
+                        resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
+                        rejectedDates, saved.getReason(), LeaveConstants.STATUS_REJECTED,
+                        managerDisplayName, resolveActorRoleDisplay(request.actorUsername()),
+                        request.rejectionReason());
+            }
+
             return toLeaveResponse(saved);
 
         } else {
@@ -431,7 +489,11 @@ public class LeaveServiceImpl implements LeaveService {
             if (!rejectedDates.isEmpty()) {
                 leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
             }
-            leave.updateStatus(overallStatus, request.actorUsername(), request.rejectionReason());
+            if (LeaveConstants.STATUS_APPROVED.equals(overallStatus)) {
+                leave.setAdminApproved(request.actorUsername());
+            } else {
+                leave.setAdminRejected(request.actorUsername(), request.rejectionReason());
+            }
             leave.appendTrailEntry(overallStatus, request.actorUsername(), null, null,
                     "Admin final decision: " + approvedDates.size() + " approved, " + rejectedDates.size() + " rejected"
                     + (request.rejectionReason() != null ? ". Reason: " + request.rejectionReason() : ""));
@@ -478,6 +540,8 @@ public class LeaveServiceImpl implements LeaveService {
         LeaveType leaveType = leaveTypeRepository.findById(request.leaveTypeId())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Leave type not found with id: " + request.leaveTypeId()));
+
+        validateRequestedLeaveBalance(leave.getUser(), leaveType, request.leaveDates());
 
         leave.updateDetails(leaveType, request.reason().trim(), request.comments(), request.trail());
         LeaveRecord saved = leaveRepository.save(leave);
@@ -682,15 +746,18 @@ public class LeaveServiceImpl implements LeaveService {
                     String managerDisplayRole = userProfileRepository.findByUserName(finalManagerUsername)
                             .map(m -> resolveRoleDisplay(m.getRole()))
                             .orElse("");
+                    String employeeDisplayRole = resolveRoleDisplay(user.getRole());
                     leaveEmailService.sendPendingApprovalReminder(
                             recipients,
                             finalEmployeeDisplayName,
+                            employeeDisplayRole,
                             leave.getLeaveType(),
                             dates,
                             leave.getReason(),
                             managerDisplayName,
                             managerDisplayRole,
-                            loginUrl
+                            loginUrl,
+                            leaveId
                     );
                 }
                 execution.setVariable("leaveType", leave.getLeaveType());
@@ -801,10 +868,17 @@ public class LeaveServiceImpl implements LeaveService {
         LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
                 .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
 
+        String currentStatus = leave.getStatus() != null ? leave.getStatus() : LeaveConstants.STATUS_PENDING;
         if (LeaveConstants.STATUS_MANAGER_APPROVED.equals(status)) {
             leave.setManagerApproved(actor);
-        } else {
-            leave.updateStatus(status, actor, rejectionReason);
+        } else if (LeaveConstants.STATUS_APPROVED.equals(status)) {
+            leave.setAdminApproved(actor);
+        } else if (LeaveConstants.STATUS_REJECTED.equals(status)) {
+            if (LeaveConstants.STATUS_MANAGER_APPROVED.equalsIgnoreCase(currentStatus)) {
+                leave.setAdminRejected(actor, rejectionReason);
+            } else {
+                leave.setManagerRejected(actor, rejectionReason);
+            }
         }
 
         String note = LeaveConstants.STATUS_REJECTED.equals(status) && rejectionReason != null
@@ -853,7 +927,7 @@ public class LeaveServiceImpl implements LeaveService {
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
                 adminEmails, employeeEmails, employeeName,
-                leave.getLeaveType(), dates, leave.getReason(), managerDisplayName
+                leave.getLeaveType(), dates, leave.getReason(), managerDisplayName, leaveId
         );
         log.info("[NotifyAdminForFinalApproval] leaveId={} notified {} admin(s)", leaveId, adminEmails.size());
     }
@@ -962,6 +1036,10 @@ public class LeaveServiceImpl implements LeaveService {
             ProcessInstance instance = runtimeService.startProcessInstanceByKey(
                     PROCESS_DEF_KEY, String.valueOf(saved.getId()), vars
             );
+            if (instance == null) {
+                log.warn("[LeaveService] Flowable returned null process instance for leaveId={}", saved.getId());
+                return;
+            }
             saved.appendTrailEntry(
                 "PROCESS_STARTED",
                 user.getUserName(),
@@ -981,7 +1059,16 @@ public class LeaveServiceImpl implements LeaveService {
 
     private Task findTaskByDefinitionKey(Long leaveId, String taskDefinitionKey) {
         try {
-            return taskService.createTaskQuery()
+            if (taskService == null) {
+                return null;
+            }
+
+            TaskQuery taskQuery = taskService.createTaskQuery();
+            if (taskQuery == null) {
+                return null;
+            }
+
+            return taskQuery
                     .processInstanceBusinessKey(String.valueOf(leaveId))
                     .taskDefinitionKey(taskDefinitionKey)
                     .singleResult();
@@ -989,6 +1076,27 @@ public class LeaveServiceImpl implements LeaveService {
             log.warn("[LeaveService] Could not query Flowable task '{}' for leaveId={}: {}",
                     taskDefinitionKey, leaveId, e.getMessage());
             return null;
+        }
+    }
+
+    private void validateManagerMailDecision(Long leaveId, UserProfile actor, String role) {
+        if (!LeaveConstants.ROLE_MANAGER.equals(role) && !LeaveConstants.ROLE_ADMIN.equals(role)) {
+            throw new IllegalArgumentException("Only a MANAGER or ADMIN can approve or reject this pending leave.");
+        }
+
+        if (LeaveConstants.ROLE_ADMIN.equals(role)) {
+            return;
+        }
+
+        Task managerTask = findTaskByDefinitionKey(leaveId, "task_manager_approval");
+        if (managerTask == null) {
+            return;
+        }
+
+        String assignee = managerTask.getAssignee();
+        if (assignee != null && !assignee.isBlank()
+                && !assignee.equalsIgnoreCase(actor.getUserName())) {
+            throw new IllegalArgumentException("This leave request is assigned to " + assignee + ", not " + actor.getUserName() + ".");
         }
     }
 
@@ -1113,6 +1221,32 @@ public class LeaveServiceImpl implements LeaveService {
         }
     }
 
+    private void validateRequestedLeaveBalance(UserProfile user, LeaveType leaveType, List<LeaveDateDto> leaveDates) {
+        String leaveUniqueName = leaveType.getLeaveUniqueName();
+        if (leaveUniqueName == null || leaveUniqueName.isBlank()) {
+            return;
+        }
+
+        Double remaining = employeeLeaveRepository.getRemainingBalance(user.getId(), leaveUniqueName);
+        double requestedDays = calculateRequestedLeaveDays(leaveDates);
+        if (remaining != null && remaining <= 0) {
+            throw new IllegalArgumentException(
+                    "You have no remaining " + leaveType.getLeaveName() + " balance.");
+        }
+        if (remaining != null && requestedDays > remaining) {
+            throw new IllegalArgumentException(String.format(
+                    "Requested %.1f day(s) exceeds remaining %s balance of %.1f day(s).",
+                    requestedDays, leaveType.getLeaveName(), remaining));
+        }
+    }
+
+    private double calculateRequestedLeaveDays(List<LeaveDateDto> leaveDates) {
+        return leaveDates.stream()
+                .mapToDouble(date -> date.dayType() != null
+                        && date.dayType().toUpperCase().contains(LeaveConstants.DAY_TYPE_HALF_KEYWORD) ? 0.5 : 1.0)
+                .sum();
+    }
+
     private void validateNoConflicts(List<LeaveType> conflicts, String leaveName, String leaveUniqueName) {
         conflicts.stream().filter(c -> c.getLeaveName() != null && c.getLeaveName().equalsIgnoreCase(leaveName))
                 .findFirst().ifPresent(c -> { throw new IllegalArgumentException("Leave name already exists: " + leaveName); });
@@ -1132,7 +1266,11 @@ public class LeaveServiceImpl implements LeaveService {
                 leave.getEmailId(), leave.getLeaveTypeId(), leave.getLeaveType(),
                 dates, leave.getReason(), leave.getComments(), leave.getTrail(),
                 leave.isEditable(), leave.getStatus() != null ? leave.getStatus() : LeaveConstants.STATUS_PENDING,
-                leave.getApprovedBy(), leave.getManagerApprovedBy(), leave.getRejectionReason(),
+                leave.getApprovedBy(), leave.getManagerApprovedBy(), leave.getManagerRejectedBy(),
+                leave.getManagerApprovedAt(), leave.getManagerRejectedAt(),
+                leave.getAdminApprovedBy(), leave.getAdminRejectedBy(),
+                leave.getAdminApprovedAt(), leave.getAdminRejectedAt(),
+                leave.getRejectionReason(),
                 leave.getCreatedAt(), leave.getUpdatedAt(), notifyUserIds
         );
     }

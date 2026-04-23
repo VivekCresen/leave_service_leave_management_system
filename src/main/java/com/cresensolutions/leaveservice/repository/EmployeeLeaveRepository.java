@@ -6,32 +6,31 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.Optional;
-
 public interface EmployeeLeaveRepository extends JpaRepository<EmployeeLeave, Long> {
 
-    @Query(value = "SELECT * FROM leave_schema.employee_leave WHERE user_id = :userId LIMIT 1", nativeQuery = true)
-    Optional<EmployeeLeave> findByUserId(@Param("userId") Long userId);
-
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
-            UPDATE leave_schema.employee_leave
-            SET leaves = jsonb_set(
-                leaves,
-                ARRAY[:leaveKey],
-                to_jsonb(GREATEST(0, COALESCE((leaves->>:leaveKey)::numeric, 0) - :days))
-            )
-            WHERE user_id = :userId
-            """, nativeQuery = true)
-    int deductLeaveBalance(@Param("userId") Long userId,
-                           @Param("leaveKey") String leaveKey,
-                           @Param("days") double days);
-
-    @Query(value = """
-            SELECT COALESCE((leaves::jsonb->>:leaveKey)::numeric, 0)
+            SELECT CAST(leaves ->> :leaveUniqueName AS DOUBLE PRECISION)
             FROM leave_schema.employee_leave
             WHERE user_id = :userId
             """, nativeQuery = true)
     Double getRemainingBalance(@Param("userId") Long userId,
-                               @Param("leaveKey") String leaveKey);
+                               @Param("leaveUniqueName") String leaveUniqueName);
+
+    @Modifying
+    @Query(value = """
+            UPDATE leave_schema.employee_leave
+            SET leaves = jsonb_set(
+                COALESCE(leaves, '{}'::jsonb),
+                ARRAY[:leaveUniqueName],
+                to_jsonb(GREATEST(
+                    COALESCE(CAST(leaves ->> :leaveUniqueName AS DOUBLE PRECISION), 0) - :days,
+                    0
+                )),
+                true
+            )
+            WHERE user_id = :userId
+            """, nativeQuery = true)
+    int deductLeaveBalance(@Param("userId") Long userId,
+                           @Param("leaveUniqueName") String leaveUniqueName,
+                           @Param("days") Double days);
 }

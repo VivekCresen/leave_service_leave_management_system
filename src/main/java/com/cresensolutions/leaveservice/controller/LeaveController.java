@@ -5,6 +5,7 @@ import com.cresensolutions.leaveservice.dto.CreateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.CreateLeaveTypeRequest;
 import com.cresensolutions.leaveservice.dto.LeaveResponse;
 import com.cresensolutions.leaveservice.dto.LeaveTypeResponse;
+import com.cresensolutions.leaveservice.dto.MailLeaveDecisionRequest;
 import com.cresensolutions.leaveservice.dto.NotifyUserResponse;
 import com.cresensolutions.leaveservice.dto.PagedResponse;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
@@ -100,6 +101,14 @@ public class LeaveController {
             @Valid @RequestBody UpdateLeaveStatusRequest request
     ) {
         return leaveService.updateLeaveStatus(leaveId, request);
+    }
+
+    @PostMapping("/{leaveId}/mail-decision")
+    public LeaveResponse reviewLeaveFromMail(
+            @PathVariable Long leaveId,
+            @Valid @RequestBody MailLeaveDecisionRequest request
+    ) {
+        return leaveService.reviewLeaveFromMail(leaveId, request);
     }
 
     @PutMapping("/{leaveId}/partial-status")

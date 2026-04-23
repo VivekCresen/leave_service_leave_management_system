@@ -4,7 +4,14 @@ CREATE SCHEMA IF NOT EXISTS email_schema;
 CREATE SCHEMA IF NOT EXISTS leave_schema;
 
 -- Add manager_approved_by column if upgrading existing DB
-ALTER TABLE leave_schema.leave_application ADD COLUMN IF NOT EXISTS manager_approved_by VARCHAR;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS manager_approved_by VARCHAR;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS manager_rejected_by VARCHAR;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS admin_approved_by VARCHAR;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS admin_rejected_by VARCHAR;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS manager_approved_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS manager_rejected_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS admin_approved_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE IF EXISTS leave_schema.leave_application ADD COLUMN IF NOT EXISTS admin_rejected_at TIMESTAMP WITH TIME ZONE;
 
 -- ============================================================
 -- core → user_schema
@@ -76,7 +83,7 @@ CREATE TABLE IF NOT EXISTS email_schema.email_configuration (
     updated_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- template_type values (leave-service): PENDING_APPROVAL | LEAVE_APPROVED | LEAVE_REJECTED | REMINDER_4DAY | REMINDER_2DAY
+-- template_type values (leave-service): PENDING_APPROVAL | MANAGER_APPROVED_PENDING | LEAVE_APPROVED | LEAVE_REJECTED | REMINDER_4DAY | REMINDER_2DAY
 -- template_type values (user-service):  PASSWORD_RESET_OTP | USER_CREATED | USER_DELETED | USER_ROLE_CHANGED
 CREATE TABLE IF NOT EXISTS email_schema.email_template (
     id            BIGSERIAL PRIMARY KEY,
@@ -128,6 +135,13 @@ CREATE TABLE IF NOT EXISTS leave_schema.leave_application (
     status              VARCHAR  DEFAULT 'PENDING',
     approved_by         VARCHAR,
     manager_approved_by VARCHAR,
+    manager_rejected_by VARCHAR,
+    manager_approved_at TIMESTAMP WITH TIME ZONE,
+    manager_rejected_at TIMESTAMP WITH TIME ZONE,
+    admin_approved_by   VARCHAR,
+    admin_rejected_by   VARCHAR,
+    admin_approved_at   TIMESTAMP WITH TIME ZONE,
+    admin_rejected_at   TIMESTAMP WITH TIME ZONE,
     rejection_reason    VARCHAR,
     reminder_sent_flags VARCHAR,
     trail               JSONB    DEFAULT '[]'::jsonb,
@@ -145,6 +159,65 @@ CREATE TABLE IF NOT EXISTS leave_schema.leave_application (
 CREATE INDEX IF NOT EXISTS idx_leave_application_user_id      ON leave_schema.leave_application(user_id);
 CREATE INDEX IF NOT EXISTS idx_leave_application_leave_type_id ON leave_schema.leave_application(leave_type_id);
 CREATE INDEX IF NOT EXISTS idx_leave_application_trail        ON leave_schema.leave_application USING GIN (trail);
+
+UPDATE leave_schema.leave_application la
+SET manager_approved_at = src.approved_at
+FROM (
+    SELECT id, MAX((entry ->> 'timestamp')::timestamptz) AS approved_at
+    FROM (
+        SELECT app.id, jsonb_array_elements(COALESCE(app.trail, '[]'::jsonb)) AS entry
+        FROM leave_schema.leave_application app
+    ) expanded
+    WHERE entry ->> 'event' = 'MANAGER_APPROVED'
+    GROUP BY id
+) src
+WHERE la.id = src.id
+  AND la.manager_approved_at IS NULL;
+
+UPDATE leave_schema.leave_application la
+SET manager_rejected_at = src.rejected_at
+FROM (
+    SELECT id, MAX((entry ->> 'timestamp')::timestamptz) AS rejected_at
+    FROM (
+        SELECT app.id, app.manager_rejected_by, jsonb_array_elements(COALESCE(app.trail, '[]'::jsonb)) AS entry
+        FROM leave_schema.leave_application app
+    ) expanded
+    WHERE entry ->> 'event' = 'REJECTED'
+      AND COALESCE(entry ->> 'actor', '') = COALESCE(manager_rejected_by, '')
+    GROUP BY id
+) src
+WHERE la.id = src.id
+  AND la.manager_rejected_at IS NULL;
+
+UPDATE leave_schema.leave_application la
+SET admin_approved_at = src.approved_at
+FROM (
+    SELECT id, MAX((entry ->> 'timestamp')::timestamptz) AS approved_at
+    FROM (
+        SELECT app.id, app.admin_approved_by, jsonb_array_elements(COALESCE(app.trail, '[]'::jsonb)) AS entry
+        FROM leave_schema.leave_application app
+    ) expanded
+    WHERE entry ->> 'event' = 'APPROVED'
+      AND COALESCE(entry ->> 'actor', '') = COALESCE(admin_approved_by, '')
+    GROUP BY id
+) src
+WHERE la.id = src.id
+  AND la.admin_approved_at IS NULL;
+
+UPDATE leave_schema.leave_application la
+SET admin_rejected_at = src.rejected_at
+FROM (
+    SELECT id, MAX((entry ->> 'timestamp')::timestamptz) AS rejected_at
+    FROM (
+        SELECT app.id, app.admin_rejected_by, jsonb_array_elements(COALESCE(app.trail, '[]'::jsonb)) AS entry
+        FROM leave_schema.leave_application app
+    ) expanded
+    WHERE entry ->> 'event' = 'REJECTED'
+      AND COALESCE(entry ->> 'actor', '') = COALESCE(admin_rejected_by, '')
+    GROUP BY id
+) src
+WHERE la.id = src.id
+  AND la.admin_rejected_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS leave_schema.leave_notify_users (
     id                   BIGSERIAL PRIMARY KEY,
@@ -247,203 +320,225 @@ WHERE NOT EXISTS (SELECT 1 FROM leave_schema.leave_types WHERE leave_unique_name
 INSERT INTO email_schema.email_template (template_type, subject, body_html, active)
 SELECT 'PENDING_APPROVAL',
        'Leave Approval Required',
-       '<p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.7;">Hello <strong>{{managerName}}</strong> <span style="color:#64748b;font-size:13px;">({{managerRole}})</span>,</p>
-<p style="margin:0 0 18px;color:#475569;font-size:15px;line-height:1.7;">A new leave request has been submitted and is awaiting your approval.</p>
-<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 10px;margin:0 0 18px;">
+       '<p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;">Hello <strong>{{managerName}}</strong> <span style="color:#64748b;font-size:12px;">({{managerRole}})</span>,</p>
+<p style="margin:0 0 14px;color:#475569;font-size:14px;line-height:1.6;">A new leave request has been submitted and is awaiting your approval.</p>
+<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;">
   <tr>
-    <td style="width:38%;padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeName}}</td>
+    <td style="width:38%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeName}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee Role</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeRole}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee Role</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeRole}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Leave Type</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{leaveType}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Leave Type</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{leaveType}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Reason</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{reason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{reason}}</td>
   </tr>
 </table>
 {{datesTable}}
-<div style="padding:16px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;">
-  <p style="margin:0;color:#475569;font-size:14px;line-height:1.7;">Please log in to the Leave Management System to approve or reject this request.</p>
+<div style="margin-top:18px;text-align:center;">
+  <a href="{{approveUrl}}" target="_blank" style="display:inline-block;margin:0 6px 8px;padding:11px 24px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">Approve</a>
+  <a href="{{rejectUrl}}" target="_blank" style="display:inline-block;margin:0 6px 8px;padding:11px 24px;background:#dc2626;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">Reject</a>
+  <p style="margin:8px 0 0;color:#64748b;font-size:12px;line-height:1.5;">You will be asked to login first. The action works only for the assigned manager or admin role.</p>
+  <p style="margin:6px 0 0;color:#64748b;font-size:12px;line-height:1.5;">If the action button does not open properly, <a href="{{loginUrl}}" target="_blank" style="color:#0f766e;text-decoration:none;font-weight:700;">log in here</a> and complete the request from the dashboard.</p>
 </div>',
        TRUE
-WHERE NOT EXISTS (SELECT 1 FROM email_schema.email_template WHERE template_type = 'PENDING_APPROVAL');
+ON CONFLICT (template_type) DO UPDATE
+  SET subject    = EXCLUDED.subject,
+      body_html  = EXCLUDED.body_html,
+      updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO email_schema.email_template (template_type, subject, body_html, active)
 SELECT 'MANAGER_APPROVED_PENDING',
        'Leave Approved by Manager – Awaiting Your Final Approval',
-       '<p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.7;">Hello <strong>Admin</strong>,</p>
-<p style="margin:0 0 18px;color:#475569;font-size:15px;line-height:1.7;">A leave request has been <strong style="color:#0f8b8d;">approved by the manager</strong> and is now awaiting your final approval.</p>
-<div style="margin:0 0 22px;padding:16px 20px;border-radius:16px;background:#ecfdf5;border:1px solid #bbf7d0;display:inline-block;">
-  <span style="font-size:13px;font-weight:700;color:#0f8b8d;letter-spacing:0.08em;">✅ MANAGER APPROVED – PENDING ADMIN FINAL APPROVAL</span>
+       '<p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;">Hello <strong>Admin</strong>,</p>
+<p style="margin:0 0 14px;color:#475569;font-size:14px;line-height:1.6;">A leave request has been <strong style="color:#0f8b8d;">approved by the manager</strong> and is now awaiting your final approval.</p>
+<div style="margin:0 0 16px;padding:12px 16px;border-radius:12px;background:#ecfdf5;border:1px solid #bbf7d0;">
+  <span style="font-size:12px;font-weight:700;color:#0f8b8d;letter-spacing:0.06em;">✅ MANAGER APPROVED – PENDING ADMIN FINAL APPROVAL</span>
 </div>
-<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 20px;">
+<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;">
   <tr>
-    <td style="width:36%;padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeName}}</td>
+    <td style="width:36%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeName}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Leave Type</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{leaveType}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Leave Type</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{leaveType}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Reason</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{reason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{reason}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Approved By Manager</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;"><strong>{{managerName}}</strong></td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Approved By Manager</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;"><strong>{{managerName}}</strong></td>
   </tr>
 </table>
 {{datesTable}}
-<div style="padding:16px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;">
-  <p style="margin:0;color:#475569;font-size:14px;line-height:1.7;">Please log in to the Leave Management System to give your final approval or rejection.</p>
+<div style="margin-top:18px;text-align:center;">
+  <a href="{{approveUrl}}" target="_blank" style="display:inline-block;margin:0 6px 8px;padding:11px 24px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">Approve</a>
+  <a href="{{rejectUrl}}" target="_blank" style="display:inline-block;margin:0 6px 8px;padding:11px 24px;background:#dc2626;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">Reject</a>
+  <p style="margin:8px 0 0;color:#64748b;font-size:12px;line-height:1.5;">You will be asked to login first. The action works only for an admin role.</p>
+  <p style="margin:6px 0 0;color:#64748b;font-size:12px;line-height:1.5;">If the action button does not open properly, <a href="{{loginUrl}}" target="_blank" style="color:#0f766e;text-decoration:none;font-weight:700;">log in here</a> and complete the request from the dashboard.</p>
 </div>',
        TRUE
-WHERE NOT EXISTS (SELECT 1 FROM email_schema.email_template WHERE template_type = 'MANAGER_APPROVED_PENDING');
+ON CONFLICT (template_type) DO UPDATE
+  SET subject    = EXCLUDED.subject,
+      body_html  = EXCLUDED.body_html,
+      updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO email_schema.email_template (template_type, subject, body_html, active)
 SELECT 'LEAVE_APPROVED',
        'Your Leave Has Been Approved ✅',
-       '<p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.7;">Hello <strong>{{employeeName}}</strong>,</p>
-<p style="margin:0 0 20px;color:#475569;font-size:15px;line-height:1.7;">Great news! Your leave request has been <strong style="color:#0f8b8d;">approved</strong>.</p>
-<div style="margin:0 0 22px;padding:16px 20px;border-radius:16px;background:#ecfdf5;border:1px solid #bbf7d0;display:inline-block;">
-  <span style="font-size:13px;font-weight:700;color:#0f8b8d;letter-spacing:0.08em;">✅ STATUS: APPROVED</span>
+       '<p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;">Hello <strong>{{employeeName}}</strong>,</p>
+<p style="margin:0 0 14px;color:#475569;font-size:14px;line-height:1.6;">Great news! Your leave request has been <strong style="color:#0f8b8d;">approved</strong>.</p>
+<div style="margin:0 0 16px;padding:12px 16px;border-radius:12px;background:#ecfdf5;border:1px solid #bbf7d0;">
+  <span style="font-size:12px;font-weight:700;color:#0f8b8d;letter-spacing:0.06em;">✅ STATUS: APPROVED</span>
 </div>
-<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 20px;">
+<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;">
   <tr>
-    <td style="width:36%;padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeName}}</td>
+    <td style="width:36%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeName}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Leave Type</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{leaveType}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Leave Type</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{leaveType}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Reason</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{reason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{reason}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Approved By</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;"><strong>{{actionBy}}</strong> <span style="color:#64748b;font-size:13px;background:#f1f5f9;padding:2px 8px;border-radius:6px;margin-left:4px;">{{actionByRole}}</span></td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Approved By</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;"><strong>{{actionBy}}</strong> <span style="color:#64748b;font-size:12px;background:#f1f5f9;padding:2px 7px;border-radius:5px;margin-left:4px;">{{actionByRole}}</span></td>
   </tr>
 </table>
 {{datesTable}}
-<div style="padding:16px 18px;border-radius:14px;background:#f0fdfa;border:1px solid #99f6e4;">
-  <p style="margin:0;color:#0f766e;font-size:14px;line-height:1.7;">Please ensure you complete any pending tasks before your leave begins. Have a great time off! 🎉</p>
+<div style="padding:12px 14px;border-radius:12px;background:#f0fdfa;border:1px solid #99f6e4;margin-bottom:18px;">
+  <p style="margin:0;color:#0f766e;font-size:13px;line-height:1.6;">Please ensure you complete any pending tasks before your leave begins. Have a great time off! 🎉</p>
+</div>
+<div style="text-align:center;">
+  <a href="{{loginUrl}}" target="_blank" style="display:inline-block;padding:11px 28px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">View in Leave System</a>
 </div>',
        TRUE
-WHERE NOT EXISTS (SELECT 1 FROM email_schema.email_template WHERE template_type = 'LEAVE_APPROVED');
+ON CONFLICT (template_type) DO UPDATE
+  SET subject    = EXCLUDED.subject,
+      body_html  = EXCLUDED.body_html,
+      updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO email_schema.email_template (template_type, subject, body_html, active)
 SELECT 'LEAVE_REJECTED',
        'Your Leave Request Has Been Rejected',
-       '<p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.7;">Hello <strong>{{employeeName}}</strong>,</p>
-<p style="margin:0 0 20px;color:#475569;font-size:15px;line-height:1.7;">We regret to inform you that your leave request has been <strong style="color:#dc2626;">rejected</strong>.</p>
-<div style="margin:0 0 22px;padding:16px 20px;border-radius:16px;background:#fef2f2;border:1px solid #fecaca;display:inline-block;">
-  <span style="font-size:13px;font-weight:700;color:#dc2626;letter-spacing:0.08em;">❌ STATUS: REJECTED</span>
+       '<p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;">Hello <strong>{{employeeName}}</strong>,</p>
+<p style="margin:0 0 14px;color:#475569;font-size:14px;line-height:1.6;">We regret to inform you that your leave request has been <strong style="color:#dc2626;">rejected</strong>.</p>
+<div style="margin:0 0 16px;padding:12px 16px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;">
+  <span style="font-size:12px;font-weight:700;color:#dc2626;letter-spacing:0.06em;">❌ STATUS: REJECTED</span>
 </div>
-<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 20px;">
+<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;">
   <tr>
-    <td style="width:36%;padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeName}}</td>
+    <td style="width:36%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeName}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Leave Type</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{leaveType}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Leave Type</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{leaveType}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Reason</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{reason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{reason}}</td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Rejected By</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;"><strong>{{actionBy}}</strong> <span style="color:#64748b;font-size:13px;background:#f1f5f9;padding:2px 8px;border-radius:6px;margin-left:4px;">{{actionByRole}}</span></td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Rejected By</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;"><strong>{{actionBy}}</strong> <span style="color:#64748b;font-size:12px;background:#f1f5f9;padding:2px 7px;border-radius:5px;margin-left:4px;">{{actionByRole}}</span></td>
   </tr>
   <tr>
-    <td style="padding:11px 14px;border-radius:12px 0 0 12px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Rejection Reason</td>
-    <td style="padding:11px 14px;border-radius:0 12px 12px 0;background:#fff;border:1px solid #fecaca;border-left:0;color:#dc2626;font-size:14px;">{{rejectionReason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Rejection Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#fff;border:1px solid #fecaca;border-left:0;color:#dc2626;font-size:13px;">{{rejectionReason}}</td>
   </tr>
 </table>
 {{datesTable}}
-<div style="padding:16px 18px;border-radius:14px;background:#fef2f2;border:1px solid #fecaca;">
-  <p style="margin:0;color:#991b1b;font-size:14px;line-height:1.7;">If you have questions about this decision, please contact your manager or HR team directly.</p>
+<div style="padding:12px 14px;border-radius:12px;background:#fef2f2;border:1px solid #fecaca;margin-bottom:18px;">
+  <p style="margin:0;color:#991b1b;font-size:13px;line-height:1.6;">If you have questions about this decision, please contact your manager or HR team directly.</p>
+</div>
+<div style="text-align:center;">
+  <a href="{{loginUrl}}" target="_blank" style="display:inline-block;padding:11px 28px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">View in Leave System</a>
 </div>',
        TRUE
-WHERE NOT EXISTS (SELECT 1 FROM email_schema.email_template WHERE template_type = 'LEAVE_REJECTED');
+ON CONFLICT (template_type) DO UPDATE
+  SET subject    = EXCLUDED.subject,
+      body_html  = EXCLUDED.body_html,
+      updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO email_schema.email_template (template_type, subject, body_html, active)
 SELECT 'REMINDER_4DAY',
        'Reminder: Leave Approval Needed in 4 Days',
-       '<p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.7;">Hello <strong>{{managerName}}</strong> <span style="color:#64748b;font-size:13px;">({{managerRole}})</span>,</p>
-<div style="margin:0 0 18px;padding:20px;border-radius:18px;background:linear-gradient(135deg,#ecfeff,#fff7ed);border:1px solid #dbeafe;text-align:center;">
-  <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#0f766e;font-weight:700;margin-bottom:8px;">Reminder</div>
-  <div style="font-size:26px;color:#0f172a;font-weight:800;">4 days remaining</div>
-  <div style="font-size:13px;color:#64748b;margin-top:6px;">Leave starts in 4 days and is still pending approval.</div>
+       '<p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;">Hello <strong>{{managerName}}</strong> <span style="color:#64748b;font-size:12px;">({{managerRole}})</span>,</p>
+<div style="margin:0 0 14px;padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,#ecfeff,#fff7ed);border:1px solid #dbeafe;text-align:center;">
+  <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#0f766e;font-weight:700;margin-bottom:6px;">Reminder</div>
+  <div style="font-size:22px;color:#0f172a;font-weight:800;">4 days remaining</div>
+  <div style="font-size:12px;color:#64748b;margin-top:4px;">Leave starts in 4 days and is still pending approval.</div>
 </div>
-<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 10px;margin:0 0 18px;">
+<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;">
   <tr>
-    <td style="width:38%;padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeName}}</td>
+    <td style="width:38%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeName}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee Role</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeRole}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Leave Type</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{leaveType}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Leave Type</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{leaveType}}</td>
-  </tr>
-  <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Reason</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{reason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{reason}}</td>
   </tr>
 </table>
 {{datesTable}}
-<div style="padding:16px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;">
-  <p style="margin:0;color:#475569;font-size:14px;line-height:1.7;">Please log in to the Leave Management System to take action before the leave begins.</p>
+<div style="margin-top:18px;text-align:center;">
+  <a href="{{loginUrl}}" target="_blank" style="display:inline-block;padding:11px 28px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">Log In to Take Action</a>
 </div>',
        TRUE
-WHERE NOT EXISTS (SELECT 1 FROM email_schema.email_template WHERE template_type = 'REMINDER_4DAY');
+ON CONFLICT (template_type) DO UPDATE
+  SET subject    = EXCLUDED.subject,
+      body_html  = EXCLUDED.body_html,
+      updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO email_schema.email_template (template_type, subject, body_html, active)
 SELECT 'REMINDER_2DAY',
        'Reminder: Leave Approval Needed in 2 Days',
-       '<p style="margin:0 0 12px;color:#475569;font-size:15px;line-height:1.7;">Hello <strong>{{managerName}}</strong> <span style="color:#64748b;font-size:13px;">({{managerRole}})</span>,</p>
-<div style="margin:0 0 18px;padding:20px;border-radius:18px;background:linear-gradient(135deg,#ecfeff,#fff7ed);border:1px solid #dbeafe;text-align:center;">
-  <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#0f766e;font-weight:700;margin-bottom:8px;">Reminder</div>
-  <div style="font-size:26px;color:#0f172a;font-weight:800;">2 days remaining</div>
-  <div style="font-size:13px;color:#64748b;margin-top:6px;">Leave starts in 2 days and is still pending approval.</div>
+       '<p style="margin:0 0 10px;color:#475569;font-size:14px;line-height:1.6;">Hello <strong>{{managerName}}</strong> <span style="color:#64748b;font-size:12px;">({{managerRole}})</span>,</p>
+<div style="margin:0 0 14px;padding:14px 16px;border-radius:14px;background:linear-gradient(135deg,#ecfeff,#fff7ed);border:1px solid #dbeafe;text-align:center;">
+  <div style="font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#0f766e;font-weight:700;margin-bottom:6px;">Reminder</div>
+  <div style="font-size:22px;color:#0f172a;font-weight:800;">2 days remaining</div>
+  <div style="font-size:12px;color:#64748b;margin-top:4px;">Leave starts in 2 days and is still pending approval.</div>
 </div>
-<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 10px;margin:0 0 18px;">
+<table role="presentation" style="width:100%;border-collapse:separate;border-spacing:0 8px;margin:0 0 14px;">
   <tr>
-    <td style="width:38%;padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeName}}</td>
+    <td style="width:38%;padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Employee</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{employeeName}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Employee Role</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{employeeRole}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Leave Type</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{leaveType}}</td>
   </tr>
   <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Leave Type</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{leaveType}}</td>
-  </tr>
-  <tr>
-    <td style="padding:12px 14px;border-radius:14px 0 0 14px;background:#f8fafc;color:#64748b;font-size:13px;font-weight:700;">Reason</td>
-    <td style="padding:12px 14px;border-radius:0 14px 14px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:14px;">{{reason}}</td>
+    <td style="padding:10px 12px;border-radius:10px 0 0 10px;background:#f8fafc;color:#64748b;font-size:12px;font-weight:700;">Reason</td>
+    <td style="padding:10px 12px;border-radius:0 10px 10px 0;background:#ffffff;border:1px solid #e2e8f0;border-left:0;color:#0f172a;font-size:13px;">{{reason}}</td>
   </tr>
 </table>
 {{datesTable}}
-<div style="padding:16px;border-radius:16px;background:#f8fafc;border:1px solid #e2e8f0;">
-  <p style="margin:0;color:#475569;font-size:14px;line-height:1.7;">Please log in to the Leave Management System to take action before the leave begins.</p>
+<div style="margin-top:18px;text-align:center;">
+  <a href="{{loginUrl}}" target="_blank" style="display:inline-block;padding:11px 28px;background:#0f766e;color:#ffffff;font-size:14px;font-weight:700;text-decoration:none;border-radius:8px;letter-spacing:0.03em;">Log In to Take Action</a>
 </div>',
        TRUE
-WHERE NOT EXISTS (SELECT 1 FROM email_schema.email_template WHERE template_type = 'REMINDER_2DAY');
+ON CONFLICT (template_type) DO UPDATE
+  SET subject    = EXCLUDED.subject,
+      body_html  = EXCLUDED.body_html,
+      updated_at = CURRENT_TIMESTAMP;
 
 -- ============================================================
 -- SEED: user-service email templates

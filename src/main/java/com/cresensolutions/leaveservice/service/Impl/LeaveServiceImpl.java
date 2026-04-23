@@ -324,7 +324,7 @@ public class LeaveServiceImpl implements LeaveService {
                 leave.setManagerRejected(request.actorUsername(), request.rejectionReason());
             }
             leave.appendTrailEntry(status, request.actorUsername(), null, null,
-                    "Rejected by " + request.actorUsername() + ". Reason: " + request.rejectionReason());
+                    "Rejected by " + resolveActorDisplayName(request.actorUsername()) + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : ""));
             LeaveRecord saved = leaveRepository.save(leave);
             List<LeaveDate> dates = leaveDateRepository.findByApplicationId(saved.getId());
             String employeeName = saved.getUser() != null && saved.getUser().getFullName() != null
@@ -435,8 +435,8 @@ public class LeaveServiceImpl implements LeaveService {
             if (allRejected) {
                 leave.setManagerRejected(request.actorUsername(), request.rejectionReason());
                 leave.appendTrailEntry(LeaveConstants.STATUS_REJECTED, request.actorUsername(), null, null,
-                        "All dates rejected by manager " + request.actorUsername()
-                        + (request.rejectionReason() != null ? ". Reason: " + request.rejectionReason() : ""));
+                        "All dates rejected by " + resolveActorDisplayName(request.actorUsername())
+                        + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : ""));
                 LeaveRecord saved = leaveRepository.save(leave);
                 leaveEmailService.sendLeaveStatusNotification(
                         resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
@@ -452,9 +452,9 @@ public class LeaveServiceImpl implements LeaveService {
             }
             leave.setManagerApproved(request.actorUsername());
             leave.appendTrailEntry(LeaveConstants.STATUS_MANAGER_APPROVED, request.actorUsername(), null, null,
-                    "Manager " + request.actorUsername() + " approved " + approvedDates.size()
+                    resolveActorDisplayName(request.actorUsername()) + " approved " + approvedDates.size()
                     + " date(s)" + (rejectedDates.isEmpty() ? "" : ", removed " + rejectedDates.size() + " rejected date(s)")
-                    + ". Pending admin final approval.");
+                    + ".");
             LeaveRecord saved = leaveRepository.save(leave);
 
             List<LeaveDate> remainingDates = leaveDateRepository.findByApplicationId(leaveId);
@@ -491,7 +491,7 @@ public class LeaveServiceImpl implements LeaveService {
             }
             leave.appendTrailEntry(overallStatus, request.actorUsername(), null, null,
                     "Admin final decision: " + approvedDates.size() + " approved, " + rejectedDates.size() + " rejected"
-                    + (request.rejectionReason() != null ? ". Reason: " + request.rejectionReason() : ""));
+                    + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : ""));
             LeaveRecord saved = leaveRepository.save(leave);
 
             if (!approvedDates.isEmpty()) {
@@ -876,9 +876,9 @@ public class LeaveServiceImpl implements LeaveService {
             }
         }
 
-        String note = LeaveConstants.STATUS_REJECTED.equals(status) && rejectionReason != null
-                ? "Rejected by " + actor + ". Reason: " + rejectionReason
-                : status + " by " + actor;
+        String note = LeaveConstants.STATUS_REJECTED.equals(status) && rejectionReason != null && !rejectionReason.isBlank()
+                ? "Rejected by " + resolveActorDisplayName(actor) + ": " + rejectionReason
+                : status + " by " + resolveActorDisplayName(actor);
         leave.appendTrailEntry(
                 status,
                 actor != null ? actor : LeaveConstants.SYSTEM_ACTOR,

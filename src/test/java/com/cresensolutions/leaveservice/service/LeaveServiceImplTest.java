@@ -274,8 +274,6 @@ class LeaveServiceImplTest {
         verify(leaveNotifyUserRepository).saveAll(any());
     }
 
-    // ─── getLeaveById ────────────────────────────────────────────────────────────
-
     @Test
     void getLeaveById_found_returnsResponse() {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
@@ -389,7 +387,6 @@ class LeaveServiceImplTest {
     @Test
     void updateLeaveStatus_approved_success() throws Exception {
         LeaveDate ld = new LeaveDate(leaveRecord, LocalDate.now(), "FULL");
-        // Admin gives final approval — leave must be in MANAGER_APPROVED state first
         setField(leaveRecord, "status", "MANAGER_APPROVED");
         UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("admin1", "APPROVED", null);
 
@@ -447,7 +444,7 @@ class LeaveServiceImplTest {
         TaskQuery taskQuery = mock(TaskQuery.class);
 
         when(managerTask.getId()).thenReturn("task-manager-1");
-        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord), Optional.of(leaveRecord));
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(taskService.createTaskQuery()).thenReturn(taskQuery);
         when(taskQuery.processInstanceBusinessKey("10")).thenReturn(taskQuery);
         when(taskQuery.taskDefinitionKey("task_manager_approval")).thenReturn(taskQuery);
@@ -986,7 +983,6 @@ class LeaveServiceImplTest {
     }
 
 
-    // ─── resolveActorDisplayName / resolveActorRoleDisplay / resolveRoleDisplay ────
 
     @Test
     void updateLeaveStatus_approved_actorWithFullName_usesFullNameInEmail() throws Exception {
@@ -1108,7 +1104,6 @@ class LeaveServiceImplTest {
                 eq("Actor One"), eq("Supervisor"), any());
     }
 
-    // ─── normalizeUniqueName / trimOrNull / normalizeGender via createLeaveType ──
 
     @Test
     void createLeaveType_withSpacesInUniqueName_normalizesToUpperUnderscore() {
@@ -1212,7 +1207,6 @@ class LeaveServiceImplTest {
                 .hasMessageContaining("already exists");
     }
 
-    // ─── sendLeaveStatusMail — null actorUsername uses system display name ────────
 
     @Test
     void sendLeaveStatusMail_nullActorUsername_usesSystemDisplayName() {
@@ -1251,7 +1245,6 @@ class LeaveServiceImplTest {
         throw new NoSuchFieldException(fieldName + " not found in " + target.getClass());
     }
 
-    // ─── getBookedDates ───────────────────────────────────────────────────────────
 
     @Test
     void getBookedDates_returnsDateStrings() {
@@ -1277,7 +1270,6 @@ class LeaveServiceImplTest {
         assertThat(result).isEmpty();
     }
 
-    // ─── appendAuditTrailEntry ────────────────────────────────────────────────────
 
     @Test
     void appendAuditTrailEntry_appendsAndReturnsResponse() {
@@ -1306,7 +1298,6 @@ class LeaveServiceImplTest {
                 .hasMessageContaining("Leave not found with id: 99");
     }
 
-    // ─── updateLeaveStatus — MANAGER_APPROVED path ───────────────────────────────
 
     @Test
     void updateLeaveStatus_managerApproved_noFlowableTask_setsStatusAndNotifiesAdmin() {
@@ -1337,7 +1328,7 @@ class LeaveServiceImplTest {
 
     @Test
     void updateLeaveStatus_approved_wrongCurrentStatus_throwsIllegalArgument() {
-        // APPROVED requires MANAGER_APPROVED state — PENDING should throw
+
         UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("admin1", "APPROVED", null);
 
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
@@ -1347,7 +1338,6 @@ class LeaveServiceImplTest {
                 .hasMessageContaining("MANAGER_APPROVED");
     }
 
-    // ─── applyPartialStatus ───────────────────────────────────────────────────────
 
     @Test
     void applyPartialStatus_managerAllApproved_setsManagerApprovedAndNotifiesAdmin() {
@@ -1429,7 +1419,6 @@ class LeaveServiceImplTest {
                 .hasMessageContaining("Partial review only allowed");
     }
 
-    // ─── notifyAdminForFinalApproval (Flowable delegate) ─────────────────────────
 
     @Test
     void notifyAdminForFinalApproval_withAdminEmails_sendsNotification() {
@@ -1480,7 +1469,6 @@ class LeaveServiceImplTest {
         verifyNoInteractions(leaveEmailService);
     }
 
-    // ─── calculateReminderSchedule ────────────────────────────────────────────────
 
     @Test
     void calculateReminderSchedule_withFutureDates_setsBothTimers() {
@@ -1553,7 +1541,6 @@ class LeaveServiceImplTest {
         verify(execution).setVariable(eq("twoDayReminderTime"), any(Date.class));
     }
 
-    // ─── updateLeaveStatusFromFlowable — MANAGER_APPROVED path ───────────────────
 
     @Test
     void updateLeaveStatusFromFlowable_managerApproved_callsSetManagerApproved() {
@@ -1574,7 +1561,6 @@ class LeaveServiceImplTest {
         verify(leaveRepository).save(leaveRecord);
     }
 
-    // helper for setting fields on objects without a setField that throws
     private static void setField2(Object target, String fieldName, Object value) {
         try {
             setField(target, fieldName, value);
@@ -1583,11 +1569,8 @@ class LeaveServiceImplTest {
         }
     }
 
-    // ─── createLeave — uncovered branches ────────────────────────────────────────
-
     @Test
     void createLeave_nullLeaveUniqueName_skipsBalanceCheck() {
-        // leaveUniqueName is null → no balance check, should succeed
         LeaveType noUniqueNameType = new LeaveType("Special Leave", null, "desc", 5, null);
         setField2(noUniqueNameType, "id", 3);
 
@@ -1632,7 +1615,6 @@ class LeaveServiceImplTest {
 
     @Test
     void createLeave_nullRemainingBalance_doesNotThrow() {
-        // remaining == null → no balance check throw
         CreateLeaveRequest req = new CreateLeaveRequest(
                 1L, null, 1,
                 List.of(new LeaveDateDto(LocalDate.now(), "FULL")),
@@ -1671,7 +1653,6 @@ class LeaveServiceImplTest {
 
     @Test
     void createLeave_withNotifyUserNotFound_skipsNullUser() throws Exception {
-        // notify user id 999 doesn't exist → filtered out, no error
         CreateLeaveRequest req = new CreateLeaveRequest(
                 1L, null, 1,
                 List.of(new LeaveDateDto(LocalDate.now(), "FULL")),
@@ -1693,7 +1674,7 @@ class LeaveServiceImplTest {
 
     @Test
     void createLeave_notifyUserSameAsOwner_skipsOwner() throws Exception {
-        // notify user id == owner id → filtered out
+
         CreateLeaveRequest req = new CreateLeaveRequest(
                 1L, null, 1,
                 List.of(new LeaveDateDto(LocalDate.now(), "FULL")),
@@ -1712,7 +1693,6 @@ class LeaveServiceImplTest {
         verify(leaveNotifyUserRepository, never()).saveAll(any());
     }
 
-    // ─── applyPartialStatus — mixed manager path ──────────────────────────────────
 
     @Test
     void applyPartialStatus_managerMixed_removesRejectedAndSetsManagerApproved() throws Exception {
@@ -1737,9 +1717,44 @@ class LeaveServiceImplTest {
 
         LeaveResponse response = leaveService.applyPartialStatus(10L, req);
         assertThat(response).isNotNull();
-        // rejected date should be deleted
         verify(leaveDateRepository).deleteAllById(any());
         verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(any(), any(), any(), any(), any(), any(), any(), anyLong());
+    }
+
+    @Test
+    void applyPartialStatus_managerMixed_withActiveFlowableTask_sendsManagerApprovedStatus() throws Exception {
+        LeaveDate d1 = new LeaveDate(leaveRecord, LocalDate.now(), "FULL");
+        LeaveDate d2 = new LeaveDate(leaveRecord, LocalDate.now().plusDays(1), "FULL");
+        setField(d1, "id", 1L);
+        setField(d2, "id", 2L);
+
+        PartialLeaveStatusRequest req = new PartialLeaveStatusRequest(
+                "manager1",
+                List.of(
+                        new PartialLeaveStatusRequest.DateDecision(LocalDate.now(), "FULL", "APPROVED"),
+                        new PartialLeaveStatusRequest.DateDecision(LocalDate.now().plusDays(1), "FULL", "REJECTED")
+                ),
+                "One date rejected");
+
+        TaskQuery taskQuery = mock(TaskQuery.class);
+        Task task = mock(Task.class);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of(d1, d2));
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+        when(taskService.createTaskQuery()).thenReturn(taskQuery);
+        when(taskQuery.processInstanceBusinessKey("10")).thenReturn(taskQuery);
+        when(taskQuery.taskDefinitionKey("task_manager_approval")).thenReturn(taskQuery);
+        when(taskQuery.singleResult()).thenReturn(task);
+        when(task.getId()).thenReturn("task-manager-1");
+
+        LeaveResponse response = leaveService.applyPartialStatus(10L, req);
+
+        assertThat(response).isNotNull();
+        verify(taskService).complete(eq("task-manager-1"), ArgumentMatchers.<Map<String, Object>>argThat(vars ->
+                LeaveConstants.STATUS_MANAGER_APPROVED.equals(vars.get("status"))
+                        && ((String) vars.get("customNote")).contains("Pending admin final approval")
+        ));
     }
 
     @Test
@@ -1792,8 +1807,6 @@ class LeaveServiceImplTest {
         verify(leaveBalanceService).deductLeaveBalance(any(), any(), eq(1.0));
     }
 
-    // ─── updateLeaveStatus — MANAGER_APPROVED with admin email notification ───────
-
     @Test
     void updateLeaveStatus_managerApproved_withAdminEmails_sendsNotification() throws Exception {
         UserProfile admin = new UserProfile();
@@ -1813,11 +1826,8 @@ class LeaveServiceImplTest {
                 any(), any(), any(), any(), any(), any(), any(), anyLong());
     }
 
-    // ─── resolveActorDisplayName / resolveActorRoleDisplay branches ───────────────
-
     @Test
     void updateLeaveStatus_rejected_actorWithNullFullName_usesUsername() throws Exception {
-        // resolveActorDisplayName: user found but fullName is null → falls back to username
         UserProfile actorUser = new UserProfile();
         setField(actorUser, "userName", "manager1");
         setField(actorUser, "fullName", null);
@@ -1837,7 +1847,6 @@ class LeaveServiceImplTest {
 
     @Test
     void updateLeaveStatus_rejected_actorNotFound_usesUsernameAsFallback() {
-        // resolveActorDisplayName: user not found → returns username
         UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("ghost_user", "REJECTED", "reason");
 
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
@@ -1852,7 +1861,6 @@ class LeaveServiceImplTest {
 
     @Test
     void updateLeaveStatus_rejected_actorWithNullRole_returnsEmptyRoleDisplay() throws Exception {
-        // resolveActorRoleDisplay: role is null → returns ""
         UserProfile actorUser = new UserProfile();
         setField(actorUser, "userName", "manager1");
         setField(actorUser, "fullName", "Manager One");
@@ -1872,7 +1880,6 @@ class LeaveServiceImplTest {
 
     @Test
     void updateLeaveStatus_rejected_actorWithUnknownRole_usesCapitalized() throws Exception {
-        // resolveActorRoleDisplay: role is "CONTRACTOR" → default switch branch
         UserProfile actorUser = new UserProfile();
         setField(actorUser, "userName", "contractor1");
         setField(actorUser, "fullName", "Contractor One");
@@ -1890,7 +1897,6 @@ class LeaveServiceImplTest {
         assertThat(response).isNotNull();
     }
 
-    // ─── createLeaveType — normalizeGender branches ───────────────────────────────
 
     @Test
     void createLeaveType_withMaleGender_normalizesCorrectly() {
@@ -1931,7 +1937,6 @@ class LeaveServiceImplTest {
         assertThat(response).isNotNull();
     }
 
-    // ─── toLeaveResponse — null user branch ───────────────────────────────────────
 
     @Test
     void getLeaveById_nullUser_returnsNullFullName() throws Exception {
@@ -1946,7 +1951,37 @@ class LeaveServiceImplTest {
         assertThat(response.fullName()).isNull();
     }
 
-    // ─── startApprovalProcess — notifyUserIds not null path ───────────────────────
+    @Test
+    void getLeaveById_managerApproved_hidesLegacyAdminApprovalFields() throws Exception {
+        setField(leaveRecord, "status", "MANAGER_APPROVED");
+        setField(leaveRecord, "approvedBy", "manager1");
+        setField(leaveRecord, "adminApprovedBy", "manager1");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        LeaveResponse response = leaveService.getLeaveById(10L);
+
+        assertThat(response.managerApprovedBy()).isEqualTo("manager1");
+        assertThat(response.adminApprovedBy()).isNull();
+    }
+
+    @Test
+    void getLeaveById_approved_usesLegacyApprovedByAsAdminFallback() throws Exception {
+        setField(leaveRecord, "status", "APPROVED");
+        setField(leaveRecord, "approvedBy", "admin1");
+        setField(leaveRecord, "adminApprovedBy", null);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
+        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
+
+        LeaveResponse response = leaveService.getLeaveById(10L);
+
+        assertThat(response.adminApprovedBy()).isEqualTo("admin1");
+    }
+
 
     @Test
     void createLeave_withNotifyUserIds_includesInProcessVars() throws Exception {

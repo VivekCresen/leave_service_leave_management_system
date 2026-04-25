@@ -34,12 +34,12 @@ class LeaveReminderDispatchServiceImplTest {
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of(ld));
 
         boolean result = service.dispatchReminder(
-                10L, "4DAY", "manager@test.com", "admin@test.com",
+                10L, "4DAY", "manager@cresensolutions.com", "admin@cresensolutions.com",
                 "John Doe", "Annual Leave", "Vacation", "proc-1", "task-1");
 
         assertThat(result).isTrue();
         verify(leaveEmailService).sendReminderNotification(
-                argThat(r -> r.size() == 2 && r.contains("manager@test.com") && r.contains("admin@test.com")),
+                argThat(r -> r.size() == 2 && r.contains("manager@cresensolutions.com") && r.contains("admin@cresensolutions.com")),
                 eq("John Doe"), eq("Annual Leave"), eq(List.of(ld)), eq("Vacation"), eq("4DAY"));
     }
 
@@ -48,7 +48,7 @@ class LeaveReminderDispatchServiceImplTest {
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
 
         boolean result = service.dispatchReminder(
-                10L, "2DAY", "same@test.com", "same@test.com",
+                10L, "2DAY", "same@cresensolutions.com", "same@cresensolutions.com",
                 "John", "Annual Leave", "Vacation", null, null);
 
         assertThat(result).isTrue();
@@ -81,7 +81,7 @@ class LeaveReminderDispatchServiceImplTest {
     @Test
     void dispatchReminder_nullLeaveId_usesEmptyDates() {
         boolean result = service.dispatchReminder(
-                null, "4DAY", "manager@test.com", null,
+                null, "4DAY", "manager@cresensolutions.com", null,
                 "John", "Annual Leave", "Vacation", null, null);
 
         assertThat(result).isTrue();
@@ -95,7 +95,7 @@ class LeaveReminderDispatchServiceImplTest {
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
 
         boolean result = service.dispatchReminder(
-                10L, "2DAY", "manager@test.com", null,
+                10L, "2DAY", "manager@cresensolutions.com", null,
                 null, "Annual Leave", "Vacation", null, null);
 
         assertThat(result).isTrue();
@@ -108,7 +108,7 @@ class LeaveReminderDispatchServiceImplTest {
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
 
         boolean result = service.dispatchReminder(
-                10L, "2DAY", "manager@test.com", null,
+                10L, "2DAY", "manager@cresensolutions.com", null,
                 "John", null, "Vacation", null, null);
 
         assertThat(result).isTrue();
@@ -121,7 +121,7 @@ class LeaveReminderDispatchServiceImplTest {
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
 
         boolean result = service.dispatchReminder(
-                10L, "2DAY", "manager@test.com", null,
+                10L, "2DAY", "manager@cresensolutions.com", null,
                 "John", "Annual Leave", null, null, null);
 
         assertThat(result).isTrue();
@@ -134,12 +134,12 @@ class LeaveReminderDispatchServiceImplTest {
         when(leaveDateRepository.findByApplicationId(5L)).thenReturn(List.of());
 
         boolean result = service.dispatchReminder(
-                5L, "4DAY", null, "admin@test.com",
+                5L, "4DAY", null, "admin@cresensolutions.com",
                 "Jane", "Sick Leave", "Sick", null, null);
 
         assertThat(result).isTrue();
         verify(leaveEmailService).sendReminderNotification(
-                argThat(r -> r.size() == 1 && r.contains("admin@test.com")),
+                argThat(r -> r.size() == 1 && r.contains("admin@cresensolutions.com")),
                 any(), any(), any(), any(), any());
     }
 }

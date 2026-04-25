@@ -144,8 +144,6 @@ class EmailConfigurationServiceImplTest {
                 .isEqualTo("true");
     }
 
-    // ─── helper ──────────────────────────────────────────────────────────────────
-
     private static EmailConfiguration buildConfig(String host, Integer port, String protocol,
                                                    boolean auth, boolean starttls, boolean ssl) {
         try {

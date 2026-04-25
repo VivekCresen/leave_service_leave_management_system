@@ -48,6 +48,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -428,10 +429,67 @@ public class LeaveServiceImpl implements LeaveService {
 
         boolean allRejected = approvedDates.isEmpty();
 
+        String overallStatus = allRejected
+                ? LeaveConstants.STATUS_REJECTED
+                : (isManagerReview ? LeaveConstants.STATUS_MANAGER_APPROVED : LeaveConstants.STATUS_APPROVED);
+
+        Task activeTask = isManagerReview
+                ? findTaskByDefinitionKey(leaveId, "task_manager_approval")
+                : findTaskByDefinitionKey(leaveId, "task_admin_approval");
+
+        if (activeTask != null) {
+            if (!allRejected && !rejectedDates.isEmpty()) {
+                leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
+                // Immediately notify employee about rejected dates
+                leaveEmailService.sendLeaveStatusNotification(
+                        resolveStatusRecipients(leave), employeeName, leave.getLeaveType(),
+                        rejectedDates, leave.getReason(), LeaveConstants.STATUS_REJECTED,
+                        resolveActorDisplayName(request.actorUsername()),
+                        resolveActorRoleDisplay(request.actorUsername()),
+                        request.rejectionReason());
+            }
+
+            Map<String, Object> vars = new HashMap<>();
+            vars.put("actorUsername", request.actorUsername());
+            vars.put("status", overallStatus);
+            if (LeaveConstants.STATUS_REJECTED.equals(overallStatus)) {
+                vars.put("rejectionReason", request.rejectionReason());
+            }
+
+            String customNote;
+            if (isManagerReview) {
+                if (allRejected) {
+                    customNote = "All dates rejected by " + resolveActorDisplayName(request.actorUsername())
+                            + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : "");
+                } else {
+                    customNote = resolveActorDisplayName(request.actorUsername()) + " approved " + approvedDates.size()
+                            + " date(s)" + (rejectedDates.isEmpty() ? "" : ", removed " + rejectedDates.size() + " rejected date(s)")
+                            + ". Pending admin final approval.";
+                }
+            } else {
+                customNote = "Admin final decision: " + approvedDates.size() + " approved, " + rejectedDates.size() + " rejected"
+                        + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : "");
+            }
+            vars.put("customNote", customNote);
+
+            if (!rejectedDates.isEmpty()) {
+                try {
+                    List<LeaveDateDto> approvedDtos = approvedDates.stream().map(d -> new LeaveDateDto(d.getLeaveDate(), d.getDayType())).toList();
+                    vars.put("leaveDates", OBJECT_MAPPER.writeValueAsString(approvedDtos));
+                } catch (Exception e) {
+                    log.warn("Failed to serialize updated leaveDates for flowable", e);
+                }
+            }
+
+            taskService.complete(activeTask.getId(), vars);
+            log.info("[LeaveService] Task {} completed ({}) via partial approval for leaveId={}", activeTask.getId(), overallStatus, leaveId);
+
+            return leaveRepository.findDetailedById(leaveId)
+                    .map(this::toLeaveResponse)
+                    .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+        }
+
         if (isManagerReview) {
-            // ── MANAGER partial review ──────────────────────────────────────────
-            // If manager rejects all → REJECTED immediately (no admin step needed)
-            // If manager approves any → MANAGER_APPROVED → goes to admin for final decision
             if (allRejected) {
                 leave.setManagerRejected(request.actorUsername(), request.rejectionReason());
                 leave.appendTrailEntry(LeaveConstants.STATUS_REJECTED, request.actorUsername(), null, null,
@@ -446,7 +504,6 @@ public class LeaveServiceImpl implements LeaveService {
                 return toLeaveResponse(saved);
             }
 
-            // Some or all approved by manager → MANAGER_APPROVED, remove rejected dates, notify admin
             if (!rejectedDates.isEmpty()) {
                 leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
             }
@@ -462,12 +519,10 @@ public class LeaveServiceImpl implements LeaveService {
                     .map(UserProfile::getEmailId).filter(e -> e != null && !e.isBlank()).toList();
             String managerDisplayName = resolveActorDisplayName(request.actorUsername());
 
-            // Notify admin + employee (pending admin approval) with approved dates
             leaveEmailService.sendManagerApprovedPendingAdminNotification(
                     adminEmails, resolveStatusRecipients(saved), employeeName,
                     saved.getLeaveType(), remainingDates, saved.getReason(), managerDisplayName, leaveId);
 
-            // If manager partially rejected some dates, immediately notify employee about those
             if (!rejectedDates.isEmpty()) {
                 leaveEmailService.sendLeaveStatusNotification(
                         resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
@@ -479,7 +534,6 @@ public class LeaveServiceImpl implements LeaveService {
             return toLeaveResponse(saved);
 
         } else {
-            String overallStatus = allRejected ? LeaveConstants.STATUS_REJECTED : LeaveConstants.STATUS_APPROVED;
 
             if (!allRejected && !rejectedDates.isEmpty()) {
                 leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
@@ -876,9 +930,15 @@ public class LeaveServiceImpl implements LeaveService {
             }
         }
 
-        String note = LeaveConstants.STATUS_REJECTED.equals(status) && rejectionReason != null && !rejectionReason.isBlank()
-                ? "Rejected by " + resolveActorDisplayName(actor) + ": " + rejectionReason
-                : status + " by " + resolveActorDisplayName(actor);
+        String customNote = stringValue(execution.getVariable("customNote"));
+        String note;
+        if (customNote != null && !customNote.isBlank()) {
+            note = customNote;
+        } else {
+            note = LeaveConstants.STATUS_REJECTED.equals(status) && rejectionReason != null && !rejectionReason.isBlank()
+                    ? "Rejected by " + resolveActorDisplayName(actor) + ": " + rejectionReason
+                    : status + " by " + resolveActorDisplayName(actor);
+        }
         leave.appendTrailEntry(
                 status,
                 actor != null ? actor : LeaveConstants.SYSTEM_ACTOR,
@@ -1255,16 +1315,46 @@ public class LeaveServiceImpl implements LeaveService {
                 .stream().map(d -> new LeaveDateDto(d.getLeaveDate(), d.getDayType())).toList();
         List<Long> notifyUserIds = leaveNotifyUserRepository.findByLeaveId(leave.getId())
                 .stream().map(LeaveNotifyUser::getUserId).toList();
+        String status = leave.getStatus() != null ? leave.getStatus() : LeaveConstants.STATUS_PENDING;
+        String approvedBy = leave.getApprovedBy();
+        String managerApprovedBy = leave.getManagerApprovedBy();
+        OffsetDateTime managerApprovedAt = leave.getManagerApprovedAt();
+        String managerRejectedBy = leave.getManagerRejectedBy();
+        OffsetDateTime managerRejectedAt = leave.getManagerRejectedAt();
+        String adminApprovedBy = leave.getAdminApprovedBy();
+        String adminRejectedBy = leave.getAdminRejectedBy();
+        OffsetDateTime adminApprovedAt = leave.getAdminApprovedAt();
+        OffsetDateTime adminRejectedAt = leave.getAdminRejectedAt();
+
+        if (LeaveConstants.STATUS_MANAGER_APPROVED.equals(status)) {
+            if ((managerApprovedBy == null || managerApprovedBy.isBlank()) && approvedBy != null && !approvedBy.isBlank()) {
+                managerApprovedBy = approvedBy;
+            }
+            adminApprovedBy = null;
+            adminRejectedBy = null;
+            adminApprovedAt = null;
+            adminRejectedAt = null;
+        } else if (LeaveConstants.STATUS_APPROVED.equals(status)) {
+            if ((adminApprovedBy == null || adminApprovedBy.isBlank()) && approvedBy != null && !approvedBy.isBlank()) {
+                adminApprovedBy = approvedBy;
+            }
+        } else if (LeaveConstants.STATUS_REJECTED.equals(status) && managerRejectedBy != null && !managerRejectedBy.isBlank()) {
+            adminApprovedBy = null;
+            adminRejectedBy = null;
+            adminApprovedAt = null;
+            adminRejectedAt = null;
+        }
+
         return new LeaveResponse(
                 leave.getId(), leave.getUserId(),
                 user == null ? null : user.getFullName(),
                 leave.getEmailId(), leave.getLeaveTypeId(), leave.getLeaveType(),
                 dates, leave.getReason(), leave.getComments(), leave.getTrail(),
-                leave.isEditable(), leave.getStatus() != null ? leave.getStatus() : LeaveConstants.STATUS_PENDING,
-                leave.getApprovedBy(), leave.getManagerApprovedBy(), leave.getManagerRejectedBy(),
-                leave.getManagerApprovedAt(), leave.getManagerRejectedAt(),
-                leave.getAdminApprovedBy(), leave.getAdminRejectedBy(),
-                leave.getAdminApprovedAt(), leave.getAdminRejectedAt(),
+                leave.isEditable(), status,
+                approvedBy, managerApprovedBy, managerRejectedBy,
+                managerApprovedAt, managerRejectedAt,
+                adminApprovedBy, adminRejectedBy,
+                adminApprovedAt, adminRejectedAt,
                 leave.getRejectionReason(),
                 leave.getCreatedAt(), leave.getUpdatedAt(), notifyUserIds
         );

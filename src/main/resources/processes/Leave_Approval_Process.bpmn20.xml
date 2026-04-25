@@ -314,8 +314,8 @@
     <sequenceFlow id="flow_mgr_2day_to_email"   sourceRef="timer_mgr_2day"                   targetRef="service_send_mgr_2day_reminder"/>
 
     <!-- Manager APPROVED → set MANAGER_APPROVED → notify admin → Admin task -->
-    <sequenceFlow id="flow_mgr_approved" name="APPROVED" sourceRef="gateway_manager_decision" targetRef="service_set_manager_approved">
-      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${status == 'APPROVED'}]]></conditionExpression>
+    <sequenceFlow id="flow_mgr_approved" name="MANAGER_APPROVED" sourceRef="gateway_manager_decision" targetRef="service_set_manager_approved">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${status == 'MANAGER_APPROVED'}]]></conditionExpression>
     </sequenceFlow>
     <sequenceFlow id="flow_mgr_approved_to_notify" sourceRef="service_set_manager_approved"  targetRef="service_notify_admin"/>
     <sequenceFlow id="flow_notify_to_calc_admin"   sourceRef="service_notify_admin"           targetRef="service_calculate_admin_reminder_schedule"/>

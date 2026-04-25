@@ -69,12 +69,9 @@ class LeaveServiceImplFlowableTest {
         setField(leaveRecord, "status", "PENDING");
     }
 
-    // ─── updateLeaveStatus via Flowable task ──────────────────────────────────────
-
     @Test
     @SuppressWarnings("unchecked")
     void updateLeaveStatus_withPendingFlowableTask_completesTask() throws Exception {
-        // Admin gives final approval — leave must be MANAGER_APPROVED
         setField(leaveRecord, "status", "MANAGER_APPROVED");
         UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("admin1", "APPROVED", null);
         Task mockTask = mock(Task.class);
@@ -85,15 +82,11 @@ class LeaveServiceImplFlowableTest {
         when(taskQuery.processInstanceBusinessKey(anyString())).thenReturn(taskQuery);
         when(taskQuery.taskDefinitionKey(anyString())).thenReturn(taskQuery);
         when(taskQuery.singleResult()).thenReturn(mockTask);
-
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
         when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
-
         LeaveResponse response = leaveService.updateLeaveStatus(10L, req);
-
         assertThat(response).isNotNull();
-        // Use explicit Map<String,Object> cast to resolve ambiguity between complete(String,String) and complete(String,Map)
         verify(taskService).complete(eq("task-123"), ArgumentMatchers.<Map<String, Object>>any());
     }
 
@@ -109,14 +102,10 @@ class LeaveServiceImplFlowableTest {
         when(taskQuery.processInstanceBusinessKey(anyString())).thenReturn(taskQuery);
         when(taskQuery.taskDefinitionKey(anyString())).thenReturn(taskQuery);
         when(taskQuery.singleResult()).thenReturn(mockTask);
-
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
         when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
-
         leaveService.updateLeaveStatus(10L, req);
-
-        // Capture the map to verify its contents without ambiguity
         ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass((Class) Map.class);
         verify(taskService).complete(eq("task-456"), captor.capture());
         assertThat(captor.getValue()).containsEntry("rejectionReason", "Not enough notice");
@@ -124,7 +113,7 @@ class LeaveServiceImplFlowableTest {
 
     @Test
     void updateLeaveStatus_flowableTaskQueryThrows_fallsBackToDirectUpdate() throws Exception {
-        // Admin gives final approval on a MANAGER_APPROVED leave; Flowable is unavailable
+
         setField(leaveRecord, "status", "MANAGER_APPROVED");
         UpdateLeaveStatusRequest req = new UpdateLeaveStatusRequest("admin1", "APPROVED", null);
 
@@ -140,7 +129,6 @@ class LeaveServiceImplFlowableTest {
         verify(leaveRepository).save(any(LeaveRecord.class));
     }
 
-    // ─── resolveApprover ─────────────────────────────────────────────────────────
 
     @Test
     void resolveApprover_withUserId_resolvesManagerAndSetsVariables() {
@@ -325,7 +313,6 @@ class LeaveServiceImplFlowableTest {
         verify(execution).setVariable(eq("managerUsername"), eq("admin"));
     }
 
-    // ─── calculateReminderSchedule ────────────────────────────────────────────────
 
     @Test
     void calculateReminderSchedule_withFutureDates_setsTimers() {
@@ -398,7 +385,7 @@ class LeaveServiceImplFlowableTest {
         verify(execution).setVariable(eq("twoDayReminderTime"), any(Date.class));
     }
 
-    // ─── deductLeaveBalance (Flowable delegate) ───────────────────────────────────
+
 
     @Test
     void deductLeaveBalance_success_deductsCorrectDays() {
@@ -499,7 +486,7 @@ class LeaveServiceImplFlowableTest {
         verify(employeeLeaveRepository).deductLeaveBalance(1L, "ANNUAL_LEAVE", 1.0);
     }
 
-    // ─── updateLeaveStatusFromFlowable ────────────────────────────────────────────
+
 
     @Test
     void updateLeaveStatusFromFlowable_missingStatus_skips() {
@@ -571,8 +558,6 @@ class LeaveServiceImplFlowableTest {
         assertThat(leaveRecord.getStatus()).isEqualTo("REJECTED");
         verify(leaveRepository).save(leaveRecord);
     }
-
-    // ─── sendReminderEmail ────────────────────────────────────────────────────────
 
     @Test
     void sendReminderEmail_dispatches() {
@@ -654,7 +639,6 @@ class LeaveServiceImplFlowableTest {
                 any(), any(), any(), any(), eq("john"), any(), any(), any(), any());
     }
 
-    // ─── sendLeaveStatusMail ──────────────────────────────────────────────────────
 
     @Test
     void sendLeaveStatusMail_sendsNotification() {
@@ -771,7 +755,6 @@ class LeaveServiceImplFlowableTest {
                 any(), eq(LeaveConstants.DEFAULT_EMPLOYEE_NAME), any(), any(), any(), any(), any(), any(), any());
     }
 
-    // ─── getAuditTrail ────────────────────────────────────────────────────────────
 
     @Test
     void getAuditTrail_withValidTrail_returnsParsedEntries() throws Exception {
@@ -819,7 +802,6 @@ class LeaveServiceImplFlowableTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
-    // ─── appendAuditTrailEntry ────────────────────────────────────────────────────
 
     @Test
     void appendAuditTrailEntry_success() {
@@ -846,7 +828,6 @@ class LeaveServiceImplFlowableTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
-    // ─── getBookedDates ───────────────────────────────────────────────────────────
 
     @Test
     void getBookedDates_returnsDateStrings() {
@@ -864,7 +845,6 @@ class LeaveServiceImplFlowableTest {
                 .hasMessageContaining("Username is required");
     }
 
-    // ─── createLeave with Flowable ────────────────────────────────────────────────
 
     @Test
     void createLeave_startsFlowableProcess() {
@@ -912,7 +892,6 @@ class LeaveServiceImplFlowableTest {
         assertThatNoException().isThrownBy(() -> leaveService.createLeave(req));
     }
 
-    // ─── resolveFlowableUser — username branch ────────────────────────────────────
 
     @Test
     void resolveApprover_withUsernameOnly_resolvesUserByUsername() {
@@ -932,8 +911,6 @@ class LeaveServiceImplFlowableTest {
 
         verify(execution).setVariable(eq("employeeName"), any());
     }
-
-    // ─── validateGenderRestriction — female user, female-only leave ───────────────
 
     @Test
     void createLeave_femaleUserFemaleOnlyLeave_succeeds() throws Exception {
@@ -980,7 +957,7 @@ class LeaveServiceImplFlowableTest {
                 List.of(new LeaveDateDto(LocalDate.now(), "FULL")),
                 "Maternity", null, null, true, null);
 
-        when(userProfileRepository.findById(1L)).thenReturn(Optional.of(activeUser)); // MALE
+        when(userProfileRepository.findById(1L)).thenReturn(Optional.of(activeUser));
         when(leaveTypeRepository.findById(5)).thenReturn(Optional.of(femaleOnly));
 
         assertThatThrownBy(() -> leaveService.createLeave(req))
@@ -1011,7 +988,6 @@ class LeaveServiceImplFlowableTest {
                 .hasMessageContaining("Male");
     }
 
-    // ─── createLeaveType — blank leaveName ───────────────────────────────────────
 
     @Test
     void createLeaveType_blankLeaveName_throwsIllegalArgument() {
@@ -1023,7 +999,6 @@ class LeaveServiceImplFlowableTest {
                 .hasMessageContaining("Leave name is required");
     }
 
-    // ─── updateLeaveType — null maxDays ──────────────────────────────────────────
 
     @Test
     void updateLeaveType_nullMaxDays_throwsIllegalArgument() {
@@ -1036,8 +1011,6 @@ class LeaveServiceImplFlowableTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Max days is required");
     }
-
-    // ─── helpers ─────────────────────────────────────────────────────────────────
 
     private static void setField(Object target, String fieldName, Object value) throws Exception {
         Class<?> clazz = target.getClass();

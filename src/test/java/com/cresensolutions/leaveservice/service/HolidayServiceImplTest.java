@@ -36,8 +36,6 @@ class HolidayServiceImplTest {
         setField(sampleHoliday, "id", 1L);
     }
 
-    // ─── getHolidays ─────────────────────────────────────────────────────────────
-
     @Test
     void getHolidays_withNullYear_returnsAllOrdered() {
         when(holidayRepository.findAllOrderedByDate()).thenReturn(List.of(sampleHoliday));
@@ -72,7 +70,6 @@ class HolidayServiceImplTest {
         assertThat(result).isEmpty();
     }
 
-    // ─── createHoliday ───────────────────────────────────────────────────────────
 
     @Test
     void createHoliday_success_returnsResponse() {
@@ -130,8 +127,6 @@ class HolidayServiceImplTest {
                 .hasMessageContaining("already exists");
     }
 
-    // ─── updateHoliday ───────────────────────────────────────────────────────────
-
     @Test
     void updateHoliday_found_updatesAndReturns() {
         CreateHolidayRequest req = new CreateHolidayRequest(
@@ -171,8 +166,6 @@ class HolidayServiceImplTest {
                 .hasMessageContaining("Holiday not found with id: 99");
     }
 
-    // ─── deleteHoliday ───────────────────────────────────────────────────────────
-
     @Test
     void deleteHoliday_found_deletesSuccessfully() {
         when(holidayRepository.existsById(1L)).thenReturn(true);
@@ -190,8 +183,6 @@ class HolidayServiceImplTest {
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Holiday not found with id: 99");
     }
-
-    // ─── toResponse mapping ───────────────────────────────────────────────────────
 
     @Test
     void getHolidays_mapsAllResponseFields() {

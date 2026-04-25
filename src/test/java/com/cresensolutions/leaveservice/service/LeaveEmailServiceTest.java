@@ -50,7 +50,7 @@ class LeaveEmailServiceTest {
         when(config.isAuth()).thenReturn(false);
         when(config.isStarttlsEnabled()).thenReturn(false);
         when(config.isSslEnabled()).thenReturn(false);
-        when(config.getFromAddress()).thenReturn("noreply@test.local");
+        when(config.getFromAddress()).thenReturn("noreply@cresensolutions.com");
         when(config.getLogoPath()).thenReturn("");
 
         when(template.getSubject()).thenReturn("Test Subject");
@@ -63,14 +63,13 @@ class LeaveEmailServiceTest {
         afternoonHalfDate = new LeaveDate(leave, LocalDate.of(2026, 5, 3), "AFTERNOON_HALF");
     }
 
-    // ─── no-config guards ─────────────────────────────────────────────────────────
-
+  
     @Test
     void sendPendingApprovalReminder_noConfig_skips() {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verifyNoInteractions(emailTemplateRepo);
@@ -81,7 +80,7 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.empty());
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "APPROVED", "manager1", "Manager", null);
 
         verifyNoInteractions(emailTemplateRepo);
@@ -92,20 +91,19 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.empty());
 
         leaveEmailService.sendReminderNotification(
-                List.of("mgr@test.local"), "John", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "4DAY");
 
         verifyNoInteractions(emailTemplateRepo);
     }
 
-    // ─── empty/null recipient guards ─────────────────────────────────────────────
-
+ 
     @Test
     void sendPendingApprovalReminder_nullRecipients_skips() {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendPendingApprovalReminder(
-                null, "John", "Employee", "Annual Leave",
+                null, "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verifyNoInteractions(emailTemplateRepo);
@@ -116,7 +114,7 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of(), "John", "Employee", "Annual Leave",
+                List.of(), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verifyNoInteractions(emailTemplateRepo);
@@ -127,7 +125,7 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendLeaveStatusNotification(
-                null, "John", "Annual Leave",
+                null, "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "APPROVED", "mgr", "Manager", null);
 
         verifyNoInteractions(emailTemplateRepo);
@@ -138,7 +136,7 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of(), "John", "Annual Leave",
+                List.of(), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "APPROVED", "mgr", "Manager", null);
 
         verifyNoInteractions(emailTemplateRepo);
@@ -149,7 +147,7 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendReminderNotification(
-                null, "John", "Annual Leave", List.of(fullDayDate), "Vacation", "4DAY");
+                null, "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "4DAY");
 
         verifyNoInteractions(emailTemplateRepo);
     }
@@ -159,12 +157,10 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendReminderNotification(
-                List.of(), "John", "Annual Leave", List.of(fullDayDate), "Vacation", "2DAY");
+                List.of(), "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "2DAY");
 
         verifyNoInteractions(emailTemplateRepo);
     }
-
-    // ─── template resolution ──────────────────────────────────────────────────────
 
     @Test
     void sendPendingApprovalReminder_templateFound_queriesCorrectType() {
@@ -173,7 +169,7 @@ class LeaveEmailServiceTest {
                 .thenReturn(Optional.of(template));
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, times(2))
@@ -186,7 +182,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, times(2))
@@ -200,7 +196,7 @@ class LeaveEmailServiceTest {
                 .thenReturn(Optional.of(template));
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "APPROVED", "manager1", "Manager", null);
 
         verify(emailTemplateRepo, times(2))
@@ -214,7 +210,7 @@ class LeaveEmailServiceTest {
                 .thenReturn(Optional.of(template));
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "REJECTED", "manager1", "Manager", "Not enough notice");
 
         verify(emailTemplateRepo, times(2))
@@ -227,7 +223,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "approved", "manager1", "Manager", null);
 
         verify(emailTemplateRepo, times(2))
@@ -241,7 +237,7 @@ class LeaveEmailServiceTest {
                 .thenReturn(Optional.of(template));
 
         leaveEmailService.sendReminderNotification(
-                List.of("mgr@test.local"), "John", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "4DAY");
 
         verify(emailTemplateRepo, times(2))
@@ -255,7 +251,7 @@ class LeaveEmailServiceTest {
                 .thenReturn(Optional.of(template));
 
         leaveEmailService.sendReminderNotification(
-                List.of("mgr@test.local"), "John", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "2DAY");
 
         verify(emailTemplateRepo, times(2))
@@ -268,22 +264,21 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendReminderNotification(
-                List.of("mgr@test.local"), "John", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "OTHER");
 
         verify(emailTemplateRepo, times(2))
                 .findByTemplateTypeAndActiveTrue(LeaveConstants.TMPL_REMINDER_2DAY);
     }
 
-    // ─── date session types ───────────────────────────────────────────────────────
-
+  
     @Test
     void sendPendingApprovalReminder_morningHalfDate_doesNotThrow() {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(morningHalfDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -295,7 +290,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(afternoonHalfDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -307,14 +302,13 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate, morningHalfDate, afternoonHalfDate), "Vacation",
                 null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
 
-    // ─── null field safety ────────────────────────────────────────────────────────
 
     @Test
     void sendPendingApprovalReminder_nullReason_doesNotThrow() {
@@ -322,7 +316,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), null, null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -334,7 +328,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(), "Vacation", "REJECTED", "manager1", "Manager", "reason");
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -346,7 +340,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 null, "Vacation", "APPROVED", "manager1", "Manager", null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -358,13 +352,11 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), null, "Annual Leave",
+                List.of("emp@cresensolutions.com"), null, "Annual Leave",
                 List.of(fullDayDate), "Vacation", "APPROVED", "manager1", "Manager", null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
-
-    // ─── buildSender: null/blank protocol, null port ─────────────────────────────
 
     @Test
     void sendPendingApprovalReminder_nullProtocol_fallsBackToSmtp() {
@@ -373,7 +365,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -386,7 +378,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -399,7 +391,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -411,7 +403,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "REJECTED", "manager1", "Manager", "reason");
 
         verify(emailTemplateRepo, times(2))
@@ -424,21 +416,20 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendReminderNotification(
-                List.of("mgr@test.local"), "John", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Annual Leave",
                 null, "Vacation", "4DAY");
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
 
-    // ─── sendManagerApprovedPendingAdminNotification ──────────────────────────────
-
+  
     @Test
     void sendManagerApprovedPendingAdminNotification_noConfig_skips() {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.empty());
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of("emp@test.local"),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
+                List.of("admin@cresensolutions.com"), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
 
         verifyNoInteractions(emailTemplateRepo);
     }
@@ -449,8 +440,8 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of("emp@test.local"),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
+                List.of("admin@cresensolutions.com"), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
@@ -461,8 +452,8 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of(), List.of("emp@test.local"),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
+                List.of(), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
 
         verify(emailTemplateRepo, never()).findByTemplateTypeAndActiveTrue(anyString());
     }
@@ -473,8 +464,8 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of(),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
+                List.of("admin@cresensolutions.com"), List.of(),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
@@ -485,13 +476,11 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of("emp@test.local"),
-                "John", "Annual Leave", null, "Vacation", "Manager One");
+                List.of("admin@cresensolutions.com"), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", null, "Vacation", "Manager One");
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
-
-    // ─── sendPartialLeaveStatusNotification ──────────────────────────────────────
 
     @Test
     void sendPartialLeaveStatusNotification_mixed_sendsTwoEmails() {
@@ -499,7 +488,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPartialLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), List.of(morningHalfDate),
                 "Vacation", "admin1", "Administrator", "Some rejected");
 
@@ -511,7 +500,7 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.empty());
 
         leaveEmailService.sendPartialLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), List.of(morningHalfDate),
                 "Vacation", "admin1", "Administrator", "reason");
 
@@ -523,22 +512,20 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
 
         leaveEmailService.sendPartialLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 null, null, "Vacation", "admin1", "Administrator", null);
 
         verifyNoInteractions(emailTemplateRepo);
     }
-
-    // ─── LeaveEmailService default methods (interface) ────────────────────────────
 
     @Test
     void sendPendingApprovalReminder_defaultMethod_withoutLeaveId_delegates() {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
-        // Call the default method (without leaveId) — it should delegate to the overload with leaveId=null
+        
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -549,26 +536,25 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
-        // Call the default method (without leaveId) — it should delegate to the overload with leaveId=null
+       
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of("emp@test.local"),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
+                List.of("admin@cresensolutions.com"), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One");
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
 
-    // ─── isDryRunMailConfig — dry-run host/address ────────────────────────────────
+    
 
     @Test
     void sendPendingApprovalReminder_dryRunConfig_skipsActualSend() {
-        // localhost + .local address = dry-run, should not throw but also not send
-        when(config.getFromAddress()).thenReturn("noreply@test.local");
+        when(config.getFromAddress()).thenReturn("noreply@cresensolutions.com");
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
-        // Should not throw even though no real SMTP server
+        
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -576,21 +562,20 @@ class LeaveEmailServiceTest {
 
     @Test
     void sendPendingApprovalReminder_nonDryRunConfig_attemptsRealSend() {
-        // Non-dry-run config: real host, real from address — will fail to connect but should attempt
+       
         when(config.getHost()).thenReturn("smtp.real.com");
-        when(config.getFromAddress()).thenReturn("noreply@company.com");
+        when(config.getFromAddress()).thenReturn("noreply@cresensolutions.com");
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
-        // Should not throw — MailException is caught internally
+   
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
 
-    // ─── resolveLogoMarkup / resolveLogoFile ─────────────────────────────────────
 
     @Test
     void sendPendingApprovalReminder_withExistingLogoFile_includesLogoMarkup() throws Exception {
@@ -601,9 +586,9 @@ class LeaveEmailServiceTest {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
-        // Should not throw — logo file exists, dry-run skips actual send
+
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
@@ -616,23 +601,22 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", null, null, null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
 
-    // ─── buildMailDecisionUrl — with leaveId ─────────────────────────────────────
+
 
     @Test
     void sendManagerApprovedPendingAdminNotification_withLeaveId_includesDecisionUrlsInBody() {
         when(emailConfigRepo.findFirstByActiveTrueOrderByIdAsc()).thenReturn(Optional.of(config));
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
-        // leaveId is passed — buildMailDecisionUrl should produce URLs with query params
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of("emp@test.local"),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One", 42L);
+                List.of("admin@cresensolutions.com"), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One", 42L);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
@@ -643,8 +627,8 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                List.of("admin@test.local"), List.of("emp@test.local"),
-                "John", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One", null);
+                List.of("admin@cresensolutions.com"), List.of("emp@cresensolutions.com"),
+                "Vivek", "Annual Leave", List.of(fullDayDate), "Vacation", "Manager One", null);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
@@ -655,13 +639,12 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPendingApprovalReminder(
-                List.of("mgr@test.local"), "John", "Employee", "Annual Leave",
+                List.of("mgr@cresensolutions.com"), "Vivek", "Employee", "Annual Leave",
                 List.of(fullDayDate), "Vacation", "Manager", "Manager", null, 10L);
 
         verify(emailTemplateRepo, atLeastOnce()).findByTemplateTypeAndActiveTrue(anyString());
     }
 
-    // ─── sendPartialLeaveStatusNotification — all-approved / all-rejected paths ──
 
     @Test
     void sendPartialLeaveStatusNotification_allApproved_sendsApprovalEmail() {
@@ -669,7 +652,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPartialLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(fullDayDate), List.of(),
                 "Vacation", "admin1", "Administrator", null);
 
@@ -683,7 +666,7 @@ class LeaveEmailServiceTest {
         when(emailTemplateRepo.findByTemplateTypeAndActiveTrue(anyString())).thenReturn(Optional.empty());
 
         leaveEmailService.sendPartialLeaveStatusNotification(
-                List.of("emp@test.local"), "John", "Annual Leave",
+                List.of("emp@cresensolutions.com"), "Vivek", "Annual Leave",
                 List.of(), List.of(morningHalfDate),
                 "Vacation", "admin1", "Administrator", "Not approved");
 

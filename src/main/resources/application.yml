@@ -1,0 +1,74 @@
+spring:
+  application:
+    name: leave-service
+  config:
+    import: optional:configserver:http://localhost:8888
+  datasource:
+    url: jdbc:postgresql://localhost:5432/leave_management_system
+    username: postgres
+    password: postgres
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+      pool-name: LeaveHikariPool
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: public
+        default_batch_fetch_size: 50
+        jdbc:
+          fetch_size: 50
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+
+server:
+  port: 8082
+
+flowable:
+  database-schema-update: true
+  async-executor-activate: true
+  async-executor-lock-owner: ${spring.application.name}-${server.port:8082}
+  process-definition-location-prefix: classpath:/processes/
+  process-definition-location-suffixes:
+    - "**.bpmn20.xml"
+    - "**.bpmn"
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port:8082}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  health:
+    mail:
+      enabled: false
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: leave-service
+        url: /v3/api-docs
+      - name: flowable-api
+        url: /flowable-swagger-process.yaml
+  packages-to-scan: com.cresensolutions.leaveservice
+
+app:
+  login-url: ${FRONTEND_LOGIN_URL:http://localhost:4200/login}

@@ -2018,4 +2018,95 @@ class LeaveServiceImplTest {
         Page<LeaveResponse> result = leaveService.getLeavesByManagerUsername("manager1", 0, 10);
         assertThat(result.getTotalElements()).isEqualTo(1);
     }
+
+    // ── getAuditTrail ─────────────────────────────────────────────────────────
+
+    @Test
+    void getAuditTrail_withValidTrail_returnsParsedEntries() throws Exception {
+        String trail = "[{\"event\":\"SUBMITTED\",\"actor\":\"john\",\"timestamp\":\"2026-01-01T10:00:00+00:00\","
+                + "\"processInstanceId\":\"proc-1\",\"taskId\":null,\"note\":\"Leave submitted\"}]";
+        setField(leaveRecord, "trail", trail);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        List<AuditTrailEntryDto> result = leaveService.getAuditTrail(10L);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).event()).isEqualTo("SUBMITTED");
+        assertThat(result.get(0).actor()).isEqualTo("john");
+        assertThat(result.get(0).note()).isEqualTo("Leave submitted");
+    }
+
+    @Test
+    void getAuditTrail_nullTrail_returnsEmptyList() throws Exception {
+        setField(leaveRecord, "trail", null);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        List<AuditTrailEntryDto> result = leaveService.getAuditTrail(10L);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void getAuditTrail_emptyArrayTrail_returnsEmptyList() throws Exception {
+        setField(leaveRecord, "trail", "[]");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        List<AuditTrailEntryDto> result = leaveService.getAuditTrail(10L);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void getAuditTrail_blankTrail_returnsEmptyList() throws Exception {
+        setField(leaveRecord, "trail", "   ");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        List<AuditTrailEntryDto> result = leaveService.getAuditTrail(10L);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void getAuditTrail_invalidJson_returnsEmptyList() throws Exception {
+        setField(leaveRecord, "trail", "not-valid-json");
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        List<AuditTrailEntryDto> result = leaveService.getAuditTrail(10L);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void getAuditTrail_leaveNotFound_throwsResourceNotFound() {
+        when(leaveRepository.findDetailedById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> leaveService.getAuditTrail(99L))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("Leave not found with id: 99");
+    }
+
+    @Test
+    void getAuditTrail_multipleEntries_returnsAllParsed() throws Exception {
+        String trail = "[{\"event\":\"SUBMITTED\",\"actor\":\"john\",\"timestamp\":\"2026-01-01T10:00:00+00:00\","
+                + "\"processInstanceId\":null,\"taskId\":null,\"note\":\"Submitted\"},"
+                + "{\"event\":\"MANAGER_APPROVED\",\"actor\":\"manager1\",\"timestamp\":\"2026-01-02T09:00:00+00:00\","
+                + "\"processInstanceId\":\"proc-1\",\"taskId\":\"task-1\",\"note\":\"Approved by manager\"}]";
+        setField(leaveRecord, "trail", trail);
+
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
+
+        List<AuditTrailEntryDto> result = leaveService.getAuditTrail(10L);
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).event()).isEqualTo("SUBMITTED");
+        assertThat(result.get(1).event()).isEqualTo("MANAGER_APPROVED");
+        assertThat(result.get(1).actor()).isEqualTo("manager1");
+        assertThat(result.get(1).processInstanceId()).isEqualTo("proc-1");
+        assertThat(result.get(1).taskId()).isEqualTo("task-1");
+    }
 }

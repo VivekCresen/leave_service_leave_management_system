@@ -1,6 +1,7 @@
 package com.cresensolutions.leaveservice.controller;
 
 import com.cresensolutions.leaveservice.common.LeaveConstants;
+import com.cresensolutions.leaveservice.common.StringUtils;
 import com.cresensolutions.leaveservice.service.ChatbotService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,18 +18,10 @@ public class ChatbotController {
 
     @PostMapping("/chat")
     public ResponseEntity<Map<String, String>> chat(@RequestBody Map<String, Object> request) {
-        String userMessage = request.get(LeaveConstants.CHATBOT_REQUEST_MESSAGE_KEY) instanceof String
-            ? (String) request.get(LeaveConstants.CHATBOT_REQUEST_MESSAGE_KEY)
-            : null;
-        String username = request.get(LeaveConstants.CHATBOT_REQUEST_USERNAME_KEY) instanceof String
-            ? (String) request.get(LeaveConstants.CHATBOT_REQUEST_USERNAME_KEY)
-            : null;
-        String requestId = request.get(LeaveConstants.CHATBOT_REQUEST_ID_KEY) instanceof String
-            ? (String) request.get(LeaveConstants.CHATBOT_REQUEST_ID_KEY)
-            : null;
-        String conversationId = request.get(LeaveConstants.CHATBOT_CONVERSATION_ID_KEY) instanceof String
-            ? (String) request.get(LeaveConstants.CHATBOT_CONVERSATION_ID_KEY)
-            : null;
+        String userMessage    = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_MESSAGE_KEY);
+        String username       = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_USERNAME_KEY);
+        String requestId      = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_ID_KEY);
+        String conversationId = StringUtils.extractString(request, LeaveConstants.CHATBOT_CONVERSATION_ID_KEY);
         boolean newConversation = Boolean.parseBoolean(String.valueOf(
             request.getOrDefault(LeaveConstants.CHATBOT_NEW_CONVERSATION_KEY, false)
         ));

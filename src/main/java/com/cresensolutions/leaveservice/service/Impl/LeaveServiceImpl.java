@@ -25,6 +25,7 @@ import com.cresensolutions.leaveservice.repository.LeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveTypeRepository;
 import com.cresensolutions.leaveservice.repository.UserProfileRepository;
 import com.cresensolutions.leaveservice.common.LeaveConstants;
+import com.cresensolutions.leaveservice.common.StringUtils;
 import com.cresensolutions.leaveservice.service.LeaveBalanceService;
 import com.cresensolutions.leaveservice.service.LeaveEmailService;
 import com.cresensolutions.leaveservice.service.LeaveReminderDispatchService;
@@ -165,9 +166,7 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Override
     public LeaveResponse getLeaveById(Long leaveId) {
-        return leaveRepository.findDetailedById(leaveId)
-                .map(this::toLeaveResponse)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        return toLeaveResponse(findLeaveOrThrow(leaveId));
     }
 
     @Override
@@ -205,8 +204,7 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     @Transactional
     public LeaveResponse updateLeaveStatus(Long leaveId, UpdateLeaveStatusRequest request) {
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
 
         String status = request.status().toUpperCase();
 
@@ -227,9 +225,7 @@ public class LeaveServiceImpl implements LeaveService {
                 vars.put("status", "APPROVED"); // BPMN gateway reads "APPROVED" → routes to MANAGER_APPROVED service task
                 taskService.complete(managerTask.getId(), vars);
                 log.info("[LeaveService] Manager task {} completed for leaveId={}", managerTask.getId(), leaveId);
-                return leaveRepository.findDetailedById(leaveId)
-                        .map(this::toLeaveResponse)
-                        .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+                return toLeaveResponse(findLeaveOrThrow(leaveId));
             }
 
             leave.setManagerApproved(request.actorUsername());
@@ -248,9 +244,7 @@ public class LeaveServiceImpl implements LeaveService {
                     leave.getLeaveType(), dates, leave.getReason(),
                     resolveActorDisplayName(request.actorUsername()), leaveId);
 
-            return leaveRepository.findDetailedById(leaveId)
-                    .map(this::toLeaveResponse)
-                    .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+            return toLeaveResponse(findLeaveOrThrow(leaveId));
         }
 
         if (LeaveConstants.STATUS_APPROVED.equals(status)) {
@@ -266,9 +260,7 @@ public class LeaveServiceImpl implements LeaveService {
                 vars.put("status", "APPROVED");
                 taskService.complete(adminTask.getId(), vars);
                 log.info("[LeaveService] Admin task {} completed (APPROVED) for leaveId={}", adminTask.getId(), leaveId);
-                return leaveRepository.findDetailedById(leaveId)
-                        .map(this::toLeaveResponse)
-                        .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+                return toLeaveResponse(findLeaveOrThrow(leaveId));
             }
 
             leave.setAdminApproved(request.actorUsername());
@@ -314,9 +306,7 @@ public class LeaveServiceImpl implements LeaveService {
                 vars.put("rejectionReason", request.rejectionReason());
                 taskService.complete(activeTask.getId(), vars);
                 log.info("[LeaveService] Task {} completed (REJECTED) for leaveId={}", activeTask.getId(), leaveId);
-                return leaveRepository.findDetailedById(leaveId)
-                        .map(this::toLeaveResponse)
-                        .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+                return toLeaveResponse(findLeaveOrThrow(leaveId));
             }
 
             if (LeaveConstants.STATUS_MANAGER_APPROVED.equalsIgnoreCase(leave.getStatus())) {
@@ -354,8 +344,7 @@ public class LeaveServiceImpl implements LeaveService {
             throw new IllegalArgumentException("Inactive users cannot approve or reject leave requests.");
         }
 
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
 
         String role = actor.getRole() == null ? "" : actor.getRole().trim().toUpperCase();
         String currentStatus = leave.getStatus() == null ? LeaveConstants.STATUS_PENDING : leave.getStatus().toUpperCase();
@@ -394,8 +383,7 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     @Transactional
     public LeaveResponse applyPartialStatus(Long leaveId, PartialLeaveStatusRequest request) {
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
 
         String currentStatus = leave.getStatus();
         boolean isManagerReview = LeaveConstants.STATUS_PENDING.equalsIgnoreCase(currentStatus);
@@ -484,9 +472,7 @@ public class LeaveServiceImpl implements LeaveService {
             taskService.complete(activeTask.getId(), vars);
             log.info("[LeaveService] Task {} completed ({}) via partial approval for leaveId={}", activeTask.getId(), overallStatus, leaveId);
 
-            return leaveRepository.findDetailedById(leaveId)
-                    .map(this::toLeaveResponse)
-                    .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+            return toLeaveResponse(findLeaveOrThrow(leaveId));
         }
 
         if (isManagerReview) {
@@ -576,8 +562,7 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     @Transactional
     public LeaveResponse updateLeave(Long leaveId, UpdateLeaveRequest request) {
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
 
         if (!LeaveConstants.STATUS_PENDING.equalsIgnoreCase(leave.getStatus())) {
             throw new IllegalArgumentException("Only PENDING leave applications can be edited.");
@@ -683,8 +668,7 @@ public class LeaveServiceImpl implements LeaveService {
 
     @Override
     public List<AuditTrailEntryDto> getAuditTrail(Long leaveId) {
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
         String trail = leave.getTrail();
         if (trail == null || trail.isBlank() || trail.equals("[]")) {
             return Collections.emptyList();
@@ -708,8 +692,7 @@ public class LeaveServiceImpl implements LeaveService {
     @Override
     @Transactional
     public LeaveResponse appendAuditTrailEntry(Long leaveId, AppendAuditTrailRequest request) {
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
         leave.appendTrailEntry(
                 request.event(),
                 request.actor(),
@@ -914,8 +897,7 @@ public class LeaveServiceImpl implements LeaveService {
             return;
         }
 
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId)
-                .orElseThrow(() -> new ResourceNotFoundException("Leave not found: " + leaveId));
+        LeaveRecord leave = findLeaveOrThrow(leaveId);
 
         String currentStatus = leave.getStatus() != null ? leave.getStatus() : LeaveConstants.STATUS_PENDING;
         if (LeaveConstants.STATUS_MANAGER_APPROVED.equals(status)) {
@@ -1161,12 +1143,10 @@ public class LeaveServiceImpl implements LeaveService {
                 .distinct()
                 .filter(uid -> !uid.equals(ownerId))
                 .map(uid -> userProfileRepository.findById(uid).orElse(null))
-                .filter(u -> u != null)
+                .filter(Objects::nonNull)
                 .map(u -> new LeaveNotifyUser(saved, u))
                 .toList();
-        if (!entries.isEmpty()) {
-            leaveNotifyUserRepository.saveAll(entries);
-        }
+        if (!entries.isEmpty()) leaveNotifyUserRepository.saveAll(entries);
     }
 
     private List<String> resolveStatusRecipients(LeaveRecord leave) {
@@ -1370,27 +1350,36 @@ public class LeaveServiceImpl implements LeaveService {
         return PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
     }
 
+    private LeaveRecord findLeaveOrThrow(Long leaveId) {
+        return findLeaveOrThrow(leaveId);
+    }
+
     private String requireNonBlank(String value, String message) {
-        if (value == null || value.isBlank()) throw new IllegalArgumentException(message);
-        return value.trim();
+        return StringUtils.requireNonBlank(value, message);
+    }
+
+    private String trimOrNull(String value) {
+        return StringUtils.trimOrNull(value);
+    }
+
+    private record ActorInfo(String displayName, String roleDisplay) {}
+
+    private ActorInfo resolveActorInfo(String username) {
+        if (username == null || username.isBlank())
+            return new ActorInfo(LeaveConstants.SYSTEM_DISPLAY_NAME, "");
+        return userProfileRepository.findByUserName(username)
+                .map(u -> new ActorInfo(
+                        u.getFullName() != null && !u.getFullName().isBlank() ? u.getFullName() : username,
+                        resolveRoleDisplay(u.getRole())))
+                .orElse(new ActorInfo(username, ""));
     }
 
     private String resolveActorDisplayName(String username) {
-        if (username == null || username.isBlank()) return LeaveConstants.SYSTEM_DISPLAY_NAME;
-        return userProfileRepository.findByUserName(username)
-                .map(u -> {
-                    String name = u.getFullName() != null && !u.getFullName().isBlank()
-                            ? u.getFullName() : username;
-                    return name;
-                })
-                .orElse(username);
+        return resolveActorInfo(username).displayName();
     }
 
     private String resolveActorRoleDisplay(String username) {
-        if (username == null || username.isBlank()) return "";
-        return userProfileRepository.findByUserName(username)
-                .map(u -> resolveRoleDisplay(u.getRole()))
-                .orElse("");
+        return resolveActorInfo(username).roleDisplay();
     }
 
     private String resolveRoleDisplay(String role) {
@@ -1404,18 +1393,13 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     private String normalizeUniqueName(String value) {
-        return requireNonBlank(value, "Leave unique name is required").replace(' ', '_').toUpperCase();
-    }
-
-    private String trimOrNull(String value) {
-        if (value == null) return null;
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
+        return StringUtils.requireNonBlank(value, "Leave unique name is required").replace(' ', '_').toUpperCase();
     }
 
     private String normalizeGender(String value) {
-        if (value == null || value.isBlank()) return null;
-        String upper = value.trim().toUpperCase();
+        String upper = StringUtils.trimOrNull(value);
+        if (upper == null) return null;
+        upper = upper.toUpperCase();
         return (upper.equals(LeaveConstants.GENDER_MALE) || upper.equals(LeaveConstants.GENDER_FEMALE)) ? upper : null;
     }
 }

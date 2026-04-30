@@ -101,27 +101,9 @@ public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
             FROM leave_schema.leave_application l
             INNER JOIN user_schema.user_profile u ON l.user_id = u.id
             WHERE LOWER(u.user_name) = LOWER(:username)
-              AND UPPER(COALESCE(l.status, 'PENDING')) = 'PENDING'
+              AND UPPER(COALESCE(l.status, 'PENDING')) = UPPER(:status)
             """, nativeQuery = true)
-    long countPendingByUsername(@Param("username") String username);
-
-    @Query(value = """
-            SELECT COUNT(*)
-            FROM leave_schema.leave_application l
-            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
-            WHERE LOWER(u.user_name) = LOWER(:username)
-              AND UPPER(COALESCE(l.status, 'PENDING')) = 'APPROVED'
-            """, nativeQuery = true)
-    long countApprovedByUsername(@Param("username") String username);
-
-    @Query(value = """
-            SELECT COUNT(*)
-            FROM leave_schema.leave_application l
-            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
-            WHERE LOWER(u.user_name) = LOWER(:username)
-              AND UPPER(COALESCE(l.status, 'PENDING')) = 'REJECTED'
-            """, nativeQuery = true)
-    long countRejectedByUsername(@Param("username") String username);
+    long countByStatusAndUsername(@Param("username") String username, @Param("status") String status);
 
     @Query(value = """
             SELECT u.user_name, u.full_name, UPPER(COALESCE(l.status, 'PENDING'))

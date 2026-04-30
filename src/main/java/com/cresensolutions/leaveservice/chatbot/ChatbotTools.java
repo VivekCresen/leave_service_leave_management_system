@@ -1,6 +1,7 @@
 package com.cresensolutions.leaveservice.chatbot;
 
 import com.cresensolutions.leaveservice.common.LeaveConstants;
+import com.cresensolutions.leaveservice.common.StringUtils;
 import com.cresensolutions.leaveservice.model.UserProfile;
 import com.cresensolutions.leaveservice.repository.EmployeeLeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveRepository;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 @Component
@@ -46,7 +48,7 @@ public class ChatbotTools {
 
         List<LeaveBalanceRow> rows = balances.stream()
             .map(this::mapLeaveBalanceRow)
-            .filter(row -> row != null)
+            .filter(Objects::nonNull)
             .sorted(Comparator.comparing(LeaveBalanceRow::leaveName, String.CASE_INSENSITIVE_ORDER))
             .toList();
 
@@ -72,65 +74,31 @@ public class ChatbotTools {
 
     @Tool(description = "Get the number of pending leave requests for a user by username.")
     public String getPendingLeaveRequests(String username) {
-        String normalizedUsername = normalizeUsername(username);
-        if (normalizedUsername == null) {
-            return "Please provide the employee username to check pending leave requests.";
-        }
-
-        Optional<UserProfile> user = userProfileRepository.findByUserNameIgnoreCase(normalizedUsername);
-        if (user.isEmpty()) {
-            return "I couldn't find a user named `" + normalizedUsername + "` in the database.";
-        }
-
-        long pendingCount = leaveRepository.countPendingByUsername(user.get().getUserName());
-        String displayName = formatDisplayName(user.get());
-        if (pendingCount == 0L) {
-            return displayName + " has 0 pending leave requests.";
-        }
-
-        return displayName + " has " + pendingCount + " pending leave request" + (pendingCount == 1L ? "." : "s.");
+        return getLeaveCountByStatus(username, LeaveConstants.STATUS_PENDING, "pending");
     }
 
     @Tool(description = "Get the number of approved leave requests for a user by username.")
     public String getApprovedLeaveRequests(String username) {
-        String normalizedUsername = normalizeUsername(username);
-        if (normalizedUsername == null) {
-            return "Please provide the employee username to check approved leave requests.";
-        }
-
-        Optional<UserProfile> user = userProfileRepository.findByUserNameIgnoreCase(normalizedUsername);
-        if (user.isEmpty()) {
-            return "I couldn't find a user named `" + normalizedUsername + "` in the database.";
-        }
-
-        long approvedCount = leaveRepository.countApprovedByUsername(user.get().getUserName());
-        String displayName = formatDisplayName(user.get());
-        if (approvedCount == 0L) {
-            return displayName + " has 0 approved leave requests.";
-        }
-
-        return displayName + " has " + approvedCount + " approved leave request" + (approvedCount == 1L ? "." : "s.");
+        return getLeaveCountByStatus(username, LeaveConstants.STATUS_APPROVED, "approved");
     }
 
     @Tool(description = "Get the number of rejected leave requests for a user by username.")
     public String getRejectedLeaveRequests(String username) {
+        return getLeaveCountByStatus(username, LeaveConstants.STATUS_REJECTED, "rejected");
+    }
+
+    private String getLeaveCountByStatus(String username, String status, String label) {
         String normalizedUsername = normalizeUsername(username);
         if (normalizedUsername == null) {
-            return "Please provide the employee username to check rejected leave requests.";
+            return "Please provide the employee username to check " + label + " leave requests.";
         }
-
         Optional<UserProfile> user = userProfileRepository.findByUserNameIgnoreCase(normalizedUsername);
         if (user.isEmpty()) {
             return "I couldn't find a user named `" + normalizedUsername + "` in the database.";
         }
-
-        long rejectedCount = leaveRepository.countRejectedByUsername(user.get().getUserName());
+        long count = leaveRepository.countByStatusAndUsername(user.get().getUserName(), status);
         String displayName = formatDisplayName(user.get());
-        if (rejectedCount == 0L) {
-            return displayName + " has 0 rejected leave requests.";
-        }
-
-        return displayName + " has " + rejectedCount + " rejected leave request" + (rejectedCount == 1L ? "." : "s.");
+        return displayName + " has " + count + " " + label + " leave request" + (count == 1L ? "." : "s.");
     }
 
     @Tool(description = "Find user profile details by username, including full name, role, active status, email, and manager if present.")
@@ -199,11 +167,7 @@ public class ChatbotTools {
     }
 
     private String normalizeUsername(String username) {
-        if (username == null) {
-            return null;
-        }
-        String normalized = username.trim();
-        return normalized.isEmpty() ? null : normalized;
+        return StringUtils.trimOrNull(username);
     }
 
     private String formatBalance(double balance) {

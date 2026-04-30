@@ -1,6 +1,8 @@
 package com.cresensolutions.leaveservice.service.Impl;
 
 import com.cresensolutions.leaveservice.common.LeaveConstants;
+import com.cresensolutions.leaveservice.common.MailSenderFactory;
+import com.cresensolutions.leaveservice.common.StringUtils;
 import com.cresensolutions.leaveservice.dto.CreateHolidayRequest;
 import com.cresensolutions.leaveservice.dto.HolidayResponse;
 import com.cresensolutions.leaveservice.exception.ResourceNotFoundException;
@@ -22,21 +24,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import java.util.Properties;
 
 @Service
 @Transactional(readOnly = true)
@@ -379,20 +379,7 @@ public class HolidayServiceImpl implements HolidayService{
         }
 
         private JavaMailSender buildSender(EmailConfiguration config) {
-            String protocol = config.getProtocol() == null || config.getProtocol().isBlank()
-                    ? "smtp" : config.getProtocol();
-            JavaMailSenderImpl sender = new JavaMailSenderImpl();
-            sender.setHost(config.getHost());
-            sender.setPort(config.getPort() == null ? 25 : config.getPort());
-            sender.setUsername(config.getUsername());
-            sender.setPassword(config.getPassword());
-            sender.setProtocol(protocol);
-            Properties props = sender.getJavaMailProperties();
-            props.put("mail.transport.protocol", protocol);
-            props.put("mail.smtp.auth", Boolean.toString(config.isAuth()));
-            props.put("mail.smtp.starttls.enable", Boolean.toString(config.isStarttlsEnabled()));
-            props.put("mail.smtp.ssl.enable", Boolean.toString(config.isSslEnabled()));
-            return sender;
+            return MailSenderFactory.build(config);
         }
 
         private String wrapInLayout(String headerTitle, String contentHtml, String logoPath) {
@@ -499,7 +486,7 @@ public class HolidayServiceImpl implements HolidayService{
             return true;
         }
 
-        private String safe(String v) { return v != null ? v : ""; }
+        private String safe(String v) { return StringUtils.safe(v); }
     }
 
     @Slf4j

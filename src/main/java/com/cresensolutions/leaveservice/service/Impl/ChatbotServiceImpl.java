@@ -4,6 +4,7 @@ import com.cresensolutions.leaveservice.chatbot.ChatbotTools;
 import com.cresensolutions.leaveservice.chatbot.Prompt;
 import com.cresensolutions.leaveservice.chatbot.PromptTemplate;
 import com.cresensolutions.leaveservice.common.LeaveConstants;
+import com.cresensolutions.leaveservice.common.StringUtils;
 import com.cresensolutions.leaveservice.model.UserProfile;
 import com.cresensolutions.leaveservice.repository.EmployeeLeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveRepository;
@@ -126,9 +127,12 @@ public class ChatbotServiceImpl implements ChatbotService {
             .build();
         this.directIntents = List.of(
             new DirectIntent(LeaveConstants.CHATBOT_LEAVE_BALANCE_INTENT_PATTERN, this::answerLeaveBalanceQuestion),
-            new DirectIntent(LeaveConstants.CHATBOT_PENDING_LEAVE_INTENT_PATTERN, this::answerPendingLeaveQuestion),
-            new DirectIntent(LeaveConstants.CHATBOT_APPROVED_LEAVE_INTENT_PATTERN, this::answerApprovedLeaveQuestion),
-            new DirectIntent(LeaveConstants.CHATBOT_REJECTED_LEAVE_INTENT_PATTERN, this::answerRejectedLeaveQuestion),
+            new DirectIntent(LeaveConstants.CHATBOT_PENDING_LEAVE_INTENT_PATTERN,
+                (msg, user) -> answerLeaveCountQuestion(msg, user, LeaveConstants.STATUS_PENDING, "pending")),
+            new DirectIntent(LeaveConstants.CHATBOT_APPROVED_LEAVE_INTENT_PATTERN,
+                (msg, user) -> answerLeaveCountQuestion(msg, user, LeaveConstants.STATUS_APPROVED, "approved")),
+            new DirectIntent(LeaveConstants.CHATBOT_REJECTED_LEAVE_INTENT_PATTERN,
+                (msg, user) -> answerLeaveCountQuestion(msg, user, LeaveConstants.STATUS_REJECTED, "rejected")),
             new DirectIntent(LeaveConstants.CHATBOT_UPCOMING_HOLIDAY_INTENT_PATTERN, (message, username) -> answerUpcomingHolidayQuestion()),
             new DirectIntent(LeaveConstants.CHATBOT_ON_LEAVE_TODAY_INTENT_PATTERN, (message, username) -> answerOnLeaveTodayQuestion()),
             new DirectIntent(LeaveConstants.CHATBOT_LEAVE_POLICY_INTENT_PATTERN,
@@ -441,64 +445,18 @@ public class ChatbotServiceImpl implements ChatbotService {
         return response.toString();
     }
 
-    private String answerPendingLeaveQuestion(String userMessage, String currentUsername) {
+    private String answerLeaveCountQuestion(String userMessage, String currentUsername, String status, String label) {
         String username = resolveQuestionUsername(userMessage, currentUsername);
         if (username == null || username.isBlank()) {
-            return "Please mention the username, or ask while logged in so I can check pending leaves.";
+            return "Please mention the username, or ask while logged in so I can check " + label + " leaves.";
         }
-
         Optional<UserProfile> user = findUserProfile(username);
         if (user.isEmpty()) {
             return "I couldn't find a user named `" + username + "` in the database.";
         }
-
-        long pendingCount = leaveRepository.countPendingByUsername(user.get().getUserName());
+        long count = leaveRepository.countByStatusAndUsername(user.get().getUserName(), status);
         String displayName = formatDisplayName(user.get());
-        if (pendingCount == 0L) {
-            return displayName + " has 0 pending leave requests.";
-        }
-
-        return displayName + " has " + pendingCount + " pending leave request" + (pendingCount == 1L ? "." : "s.");
-    }
-
-    private String answerApprovedLeaveQuestion(String userMessage, String currentUsername) {
-        String username = resolveQuestionUsername(userMessage, currentUsername);
-        if (username == null || username.isBlank()) {
-            return "Please mention the username, or ask while logged in so I can check approved leaves.";
-        }
-
-        Optional<UserProfile> user = findUserProfile(username);
-        if (user.isEmpty()) {
-            return "I couldn't find a user named `" + username + "` in the database.";
-        }
-
-        long approvedCount = leaveRepository.countApprovedByUsername(user.get().getUserName());
-        String displayName = formatDisplayName(user.get());
-        if (approvedCount == 0L) {
-            return displayName + " has 0 approved leave requests.";
-        }
-
-        return displayName + " has " + approvedCount + " approved leave request" + (approvedCount == 1L ? "." : "s.");
-    }
-
-    private String answerRejectedLeaveQuestion(String userMessage, String currentUsername) {
-        String username = resolveQuestionUsername(userMessage, currentUsername);
-        if (username == null || username.isBlank()) {
-            return "Please mention the username, or ask while logged in so I can check rejected leaves.";
-        }
-
-        Optional<UserProfile> user = findUserProfile(username);
-        if (user.isEmpty()) {
-            return "I couldn't find a user named `" + username + "` in the database.";
-        }
-
-        long rejectedCount = leaveRepository.countRejectedByUsername(user.get().getUserName());
-        String displayName = formatDisplayName(user.get());
-        if (rejectedCount == 0L) {
-            return displayName + " has 0 rejected leave requests.";
-        }
-
-        return displayName + " has " + rejectedCount + " rejected leave request" + (rejectedCount == 1L ? "." : "s.");
+        return displayName + " has " + count + " " + label + " leave request" + (count == 1L ? "." : "s.");
     }
 
     private String answerUpcomingHolidayQuestion() {
@@ -612,11 +570,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     private String normalizeUsername(String username) {
-        if (username == null) {
-            return null;
-        }
-        String normalized = username.trim();
-        return normalized.isEmpty() ? null : normalized;
+        return StringUtils.trimOrNull(username);
     }
 
     private LeaveBalanceRow mapLeaveBalanceRow(Object[] row) {

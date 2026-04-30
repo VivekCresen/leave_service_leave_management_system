@@ -41,11 +41,6 @@ public class LeaveController {
         return leaveService.createLeave(request);
     }
 
-    @PostMapping("/applications")
-    public LeaveResponse submitLeaveApplication(@Valid @RequestBody CreateLeaveRequest request) {
-        return leaveService.createLeave(request);
-    }
-
     @GetMapping
     public PagedResponse<LeaveResponse> getAllLeaves(
             @RequestParam(defaultValue = "0") int page,
@@ -70,15 +65,6 @@ public class LeaveController {
 
     @GetMapping("/by-username/{username}")
     public PagedResponse<LeaveResponse> getLeavesByUsername(
-            @PathVariable String username,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "200") int size
-    ) {
-        return PagedResponse.from(leaveService.getLeavesByUsername(username, page, size));
-    }
-
-    @GetMapping("/history/{username}")
-    public PagedResponse<LeaveResponse> getLeaveHistoryGrid(
             @PathVariable String username,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "200") int size

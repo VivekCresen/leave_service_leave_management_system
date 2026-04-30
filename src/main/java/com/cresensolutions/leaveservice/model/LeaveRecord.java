@@ -146,12 +146,24 @@ public class LeaveRecord {
     public Long getId() { return id; }
 
     public String getLeaveType() {
-        if (leaveTypeReference != null) return leaveTypeReference.getDisplayName();
+        if (leaveTypeReference != null) {
+            try {
+                return leaveTypeReference.getDisplayName();
+            } catch (Exception e) {
+                // leaveTypeReference proxy could not be loaded (e.g. deleted leave type)
+                return leaveType;
+            }
+        }
         return leaveType;
     }
 
     public Integer getLeaveTypeId() {
-        return leaveTypeReference == null ? null : leaveTypeReference.getId();
+        if (leaveTypeReference == null) return null;
+        try {
+            return leaveTypeReference.getId();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public String getEmailId() { return emailId; }

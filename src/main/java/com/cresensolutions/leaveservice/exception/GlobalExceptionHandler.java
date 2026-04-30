@@ -2,6 +2,8 @@ package com.cresensolutions.leaveservice.exception;
 
 import com.cresensolutions.leaveservice.dto.ApiErrorResponse;
 import jakarta.validation.ConstraintViolationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -18,6 +20,8 @@ import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private final MessageSource messageSource;
 
@@ -53,6 +57,13 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.toList());
 
         return buildResponse(HttpStatus.BAD_REQUEST, details);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiErrorResponse> handleGeneral(Exception exception) {
+        log.error("Unhandled exception", exception);
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR,
+                List.of("An unexpected error occurred: " + exception.getMessage()));
     }
 
     private String translate(String message) {

@@ -1351,7 +1351,8 @@ public class LeaveServiceImpl implements LeaveService {
     }
 
     private LeaveRecord findLeaveOrThrow(Long leaveId) {
-        return findLeaveOrThrow(leaveId);
+        return leaveRepository.findDetailedById(leaveId)
+                .orElseThrow(() -> new ResourceNotFoundException("Leave not found with id: " + leaveId));
     }
 
     private String requireNonBlank(String value, String message) {

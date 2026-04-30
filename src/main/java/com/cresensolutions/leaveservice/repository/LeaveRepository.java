@@ -96,6 +96,44 @@ public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
             """, nativeQuery = true)
     List<String> findBookedDatesByUsername(@Param("username") String username);
 
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM leave_schema.leave_application l
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE LOWER(u.user_name) = LOWER(:username)
+              AND UPPER(COALESCE(l.status, 'PENDING')) = 'PENDING'
+            """, nativeQuery = true)
+    long countPendingByUsername(@Param("username") String username);
+
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM leave_schema.leave_application l
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE LOWER(u.user_name) = LOWER(:username)
+              AND UPPER(COALESCE(l.status, 'PENDING')) = 'APPROVED'
+            """, nativeQuery = true)
+    long countApprovedByUsername(@Param("username") String username);
+
+    @Query(value = """
+            SELECT COUNT(*)
+            FROM leave_schema.leave_application l
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE LOWER(u.user_name) = LOWER(:username)
+              AND UPPER(COALESCE(l.status, 'PENDING')) = 'REJECTED'
+            """, nativeQuery = true)
+    long countRejectedByUsername(@Param("username") String username);
+
+    @Query(value = """
+            SELECT u.user_name, u.full_name, UPPER(COALESCE(l.status, 'PENDING'))
+            FROM leave_schema.leave_dates ld
+            INNER JOIN leave_schema.leave_application l ON ld.leave_application_id = l.id
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE ld.leave_date = :date
+              AND UPPER(COALESCE(l.status, 'PENDING')) IN ('APPROVED', 'PENDING')
+            ORDER BY COALESCE(NULLIF(u.full_name, ''), u.user_name) ASC, u.user_name ASC
+            """, nativeQuery = true)
+    List<Object[]> findPeopleOnLeaveByDate(@Param("date") LocalDate date);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "UPDATE leave_schema.leave_application SET leave_type_id = NULL WHERE leave_type_id = :leaveTypeId",
            nativeQuery = true)

@@ -32,4 +32,7 @@ public interface LeaveTypeRepository extends JpaRepository<LeaveType, Integer> {
 
     @Query(value = "SELECT leave_unique_name FROM leave_schema.leave_types WHERE id = :id", nativeQuery = true)
     String findUniqueNameById(@Param("id") Integer id);
+
+    @Query(value = "SELECT leave_name, max_days, description FROM leave_schema.leave_types ORDER BY leave_name ASC", nativeQuery = true)
+    List<Object[]> findAllForChatbot();
 }

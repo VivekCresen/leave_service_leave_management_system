@@ -1,7 +1,8 @@
-package com.cresensolutions.leaveservice.service;
+package com.cresensolutions.leaveservice.service.Impl;
 
 import com.cresensolutions.leaveservice.repository.EmployeeLeaveRepository;
 import com.cresensolutions.leaveservice.repository.LeaveTypeRepository;
+import com.cresensolutions.leaveservice.service.LeaveBalanceService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

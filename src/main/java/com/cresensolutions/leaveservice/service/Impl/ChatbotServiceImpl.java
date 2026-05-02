@@ -15,6 +15,8 @@ import com.cresensolutions.leaveservice.service.ChatHistoryService;
 import com.cresensolutions.leaveservice.service.ChatbotService;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -288,6 +290,8 @@ public class ChatbotServiceImpl implements ChatbotService {
         return normalized;
     }
 
+    @CircuitBreaker(name = "ollama-cb", fallbackMethod = "runModelCallFallback")
+    @Retry(name = "ollama-retry")
     private String runModelCall(Prompt prompt, String userMessage, String requestId)
         throws InterruptedException, ExecutionException, TimeoutException {
         Future<String> future = modelExecutor.submit(() -> {
@@ -327,6 +331,16 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     private boolean isCancelled(String requestId) {
         return requestId != null && cancelledRequestIds.contains(requestId);
+    }
+
+    /**
+     * Circuit breaker fallback — called when Ollama is down or the circuit is open.
+     * Signature must match runModelCall exactly, with a Throwable appended.
+     */
+    @SuppressWarnings("unused")
+    private String runModelCallFallback(Prompt prompt, String userMessage, String requestId, Throwable t) {
+        log.warn("Ollama circuit breaker fallback triggered: {}", t.getMessage());
+        return "Sorry, the AI assistant is temporarily unavailable. Please try again in a moment.";
     }
 
     private String tryDirectDatabaseAnswer(String userMessage, String currentUsername) {

@@ -157,6 +157,18 @@ public class LeaveRecord {
         return leaveType;
     }
 
+    public String getLeaveName() {
+        if (leaveTypeReference != null) {
+            try {
+                String name = leaveTypeReference.getLeaveName();
+                return name != null ? name : leaveType;
+            } catch (Exception e) {
+                return leaveType;
+            }
+        }
+        return leaveType;
+    }
+
     public Integer getLeaveTypeId() {
         if (leaveTypeReference == null) return null;
         try {

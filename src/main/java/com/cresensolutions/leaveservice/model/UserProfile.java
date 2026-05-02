@@ -112,6 +112,10 @@ public class UserProfile {
         return active;
     }
 
+    public void deactivate() {
+        this.active = false;
+    }
+
     public Instant getCreateDate() {
         return createDate;
     }

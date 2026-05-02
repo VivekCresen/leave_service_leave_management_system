@@ -15,4 +15,8 @@ public interface LeaveNotifyUserRepository extends JpaRepository<LeaveNotifyUser
 
     @Modifying
     void deleteByLeaveId(Long leaveId);
+
+    @Modifying
+    @Query("DELETE FROM LeaveNotifyUser n WHERE n.user.id = :userId")
+    void deleteByUserId(@Param("userId") Long userId);
 }

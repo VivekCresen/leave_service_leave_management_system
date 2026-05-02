@@ -2,6 +2,7 @@ package com.cresensolutions.leaveservice.service;
 
 import com.cresensolutions.leaveservice.dto.*;
 import com.cresensolutions.leaveservice.exception.ResourceNotFoundException;
+import com.cresensolutions.leaveservice.messaging.LeaveEventPublisher;
 import com.cresensolutions.leaveservice.model.*;
 import com.cresensolutions.leaveservice.repository.*;
 import com.cresensolutions.leaveservice.service.Impl.LeaveServiceImpl;
@@ -40,6 +41,7 @@ class LeaveServiceImplTest {
     @Mock private Executor leaveTaskExecutor;
     @Mock private org.flowable.engine.RuntimeService runtimeService;
     @Mock private org.flowable.engine.TaskService taskService;
+    @Mock private LeaveEventPublisher eventPublisher;
 
     @InjectMocks
     private LeaveServiceImpl leaveService;
@@ -393,13 +395,11 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of(ld));
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         LeaveResponse response = leaveService.updateLeaveStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveEmailService).sendLeaveStatusNotification(any(), any(), any(), any(), any(), eq("APPROVED"), any(), any(), any());
+        verify(eventPublisher).publishBalanceDeduct(any(), any(), anyDouble(), any());
+        verify(eventPublisher).publishLeaveApproved(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyDouble());
     }
 
     @Test
@@ -409,11 +409,10 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
 
         LeaveResponse response = leaveService.updateLeaveStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveEmailService).sendLeaveStatusNotification(any(), any(), any(), any(), any(), eq("REJECTED"), any(), any(), eq("Not enough notice"));
+        verify(eventPublisher).publishLeaveRejected(any(), any(), any(), any(), any(), any(), any(), any(), any(), eq("Not enough notice"));
     }
 
     @Test
@@ -908,16 +907,11 @@ class LeaveServiceImplTest {
 
         leaveService.sendReminderEmail(execution);
 
-        verify(leaveReminderDispatchService).dispatchReminder(
-                10L,
-                "4DAY",
-                "manager@cresensolutions.com",
-                "admin@cresensolutions.com",
-                "john",
-                "Annual Leave",
-                "Vacation",
-                "proc-1",
-                "service_send_reminder_email"
+        verify(eventPublisher).publishLeaveReminder(
+                eq(10L), eq("4DAY"),
+                eq("manager@cresensolutions.com"), eq("admin@cresensolutions.com"),
+                eq("john"), eq("Annual Leave"), eq("Vacation"),
+                eq("proc-1"), eq("service_send_reminder_email")
         );
     }
 
@@ -969,16 +963,9 @@ class LeaveServiceImplTest {
 
         leaveService.sendLeaveStatusMail(execution);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                argThat(recipients -> recipients.size() == 1 && recipients.contains("john@cresensolutions.com")),
-                eq("John Doe"),
-                eq("Annual Leave"),
-                eq(List.of(leaveDate)),
-                eq("Vacation"),
-                eq("APPROVED"),
-                eq("manager1"),
-                any(),
-                isNull()
+        verify(eventPublisher).publishLeaveApproved(
+                eq(10L), any(), any(), any(), any(), any(), any(),
+                eq("manager1"), any(), anyDouble()
         );
     }
 
@@ -997,16 +984,12 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
         when(userProfileRepository.findByUserName("admin1")).thenReturn(Optional.of(admin));
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         leaveService.updateLeaveStatus(10L, req);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), any(), any(), any(), any(), eq("APPROVED"),
-                eq("Admin One"), eq("Administrator"), any());
+        verify(eventPublisher).publishLeaveApproved(any(), any(), any(), any(), any(), any(), any(),
+                eq("Admin One"), eq("Administrator"), anyDouble());
     }
 
     @Test
@@ -1017,16 +1000,12 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
         when(userProfileRepository.findByUserName("ghost_admin")).thenReturn(Optional.empty());
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         leaveService.updateLeaveStatus(10L, req);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), any(), any(), any(), any(), eq("APPROVED"),
-                eq("ghost_admin"), eq(""), any());
+        verify(eventPublisher).publishLeaveApproved(any(), any(), any(), any(), any(), any(), any(),
+                eq("ghost_admin"), eq(""), anyDouble());
     }
 
     @Test
@@ -1042,16 +1021,12 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
         when(userProfileRepository.findByUserName("admin1")).thenReturn(Optional.of(admin));
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         leaveService.updateLeaveStatus(10L, req);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), any(), any(), any(), any(), eq("APPROVED"),
-                eq("admin1"), eq("Employee"), any());
+        verify(eventPublisher).publishLeaveApproved(any(), any(), any(), any(), any(), any(), any(),
+                eq("admin1"), eq("Employee"), anyDouble());
     }
 
     @Test
@@ -1067,16 +1042,12 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
         when(userProfileRepository.findByUserName("mgr1")).thenReturn(Optional.of(mgr));
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         leaveService.updateLeaveStatus(10L, req);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), any(), any(), any(), any(), eq("APPROVED"),
-                eq("Manager One"), eq("Manager"), any());
+        verify(eventPublisher).publishLeaveApproved(any(), any(), any(), any(), any(), any(), any(),
+                eq("Manager One"), eq("Manager"), anyDouble());
     }
 
     @Test
@@ -1092,16 +1063,12 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
         when(userProfileRepository.findByUserName("actor1")).thenReturn(Optional.of(actor));
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         leaveService.updateLeaveStatus(10L, req);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), any(), any(), any(), any(), eq("APPROVED"),
-                eq("Actor One"), eq("Supervisor"), any());
+        verify(eventPublisher).publishLeaveApproved(any(), any(), any(), any(), any(), any(), any(),
+                eq("Actor One"), eq("Supervisor"), anyDouble());
     }
 
 
@@ -1225,9 +1192,7 @@ class LeaveServiceImplTest {
 
         leaveService.sendLeaveStatusMail(execution);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), eq("John"), any(), any(), any(), eq("APPROVED"),
-                any(), any(), any());
+        verify(eventPublisher).publishLeaveApproved(eq(10L), any(), any(), any(), any(), any(), any(), any(), any(), anyDouble());
     }
 
     private static void setField(Object target, String fieldName, Object value) throws Exception {
@@ -1376,8 +1341,7 @@ class LeaveServiceImplTest {
 
         LeaveResponse response = leaveService.applyPartialStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), any(), any(), any(), any(), eq("REJECTED"), any(), any(), eq("Not approved"));
+        verify(eventPublisher).publishLeaveRejected(any(), any(), any(), any(), any(), any(), any(), any(), any(), eq("Not approved"));
     }
 
     @Test
@@ -1393,14 +1357,11 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of(d1));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         LeaveResponse response = leaveService.applyPartialStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveEmailService).sendPartialLeaveStatusNotification(
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(eventPublisher).publishBalanceDeduct(any(), any(), anyDouble(), any());
+        verify(eventPublisher).publishPartialDecision(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyDouble());
     }
 
     @Test
@@ -1428,17 +1389,13 @@ class LeaveServiceImplTest {
         DelegateExecution execution = mock(DelegateExecution.class);
         when(execution.getVariable("leaveId")).thenReturn(10L);
         when(execution.getVariable("actorUsername")).thenReturn("manager1");
-        when(execution.getVariable("employeeName")).thenReturn("John Doe");
 
         when(userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN)).thenReturn(List.of(admin));
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
-        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
 
         leaveService.notifyAdminForFinalApproval(execution);
 
-        verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(
-                any(), any(), any(), any(), any(), any(), any(), anyLong());
+        verify(eventPublisher).publishAdminNotify(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -1446,9 +1403,8 @@ class LeaveServiceImplTest {
         DelegateExecution execution = mock(DelegateExecution.class);
         when(execution.getVariable("leaveId")).thenReturn(10L);
         when(execution.getVariable("actorUsername")).thenReturn("manager1");
-        when(execution.getVariable("employeeName")).thenReturn("John Doe");
 
-        when(userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN)).thenReturn(List.of());
+        when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.empty());
 
         leaveService.notifyAdminForFinalApproval(execution);
 
@@ -1460,9 +1416,6 @@ class LeaveServiceImplTest {
         DelegateExecution execution = mock(DelegateExecution.class);
         when(execution.getVariable("leaveId")).thenReturn(null);
         when(execution.getVariable("actorUsername")).thenReturn("manager1");
-        when(execution.getVariable("employeeName")).thenReturn("John Doe");
-
-        when(userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN)).thenReturn(List.of());
 
         leaveService.notifyAdminForFinalApproval(execution);
 
@@ -1718,7 +1671,7 @@ class LeaveServiceImplTest {
         LeaveResponse response = leaveService.applyPartialStatus(10L, req);
         assertThat(response).isNotNull();
         verify(leaveDateRepository).deleteAllById(any());
-        verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(any(), any(), any(), any(), any(), any(), any(), anyLong());
+        verify(eventPublisher).publishManagerApproved(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -1775,8 +1728,7 @@ class LeaveServiceImplTest {
 
         LeaveResponse response = leaveService.applyPartialStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveEmailService).sendPartialLeaveStatusNotification(
-                any(), any(), any(), any(), any(), any(), any(), any(), eq("Not approved by admin"));
+        verify(eventPublisher).publishPartialDecision(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq("Not approved by admin"), anyDouble());
     }
 
     @Test
@@ -1798,13 +1750,11 @@ class LeaveServiceImplTest {
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
         when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of(d1, d2));
         when(leaveRepository.save(any())).thenReturn(leaveRecord);
-        when(leaveNotifyUserRepository.findByLeaveId(10L)).thenReturn(List.of());
-        doAnswer(inv -> { ((Runnable) inv.getArgument(0)).run(); return null; })
-                .when(leaveTaskExecutor).execute(any(Runnable.class));
 
         LeaveResponse response = leaveService.applyPartialStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveBalanceService).deductLeaveBalance(any(), any(), eq(1.0));
+        verify(eventPublisher).publishBalanceDeduct(any(), any(), eq(1.0), any());
+        verify(eventPublisher).publishPartialDecision(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), anyDouble());
     }
 
     @Test
@@ -1822,8 +1772,7 @@ class LeaveServiceImplTest {
 
         LeaveResponse response = leaveService.updateLeaveStatus(10L, req);
         assertThat(response).isNotNull();
-        verify(leaveEmailService).sendManagerApprovedPendingAdminNotification(
-                any(), any(), any(), any(), any(), any(), any(), anyLong());
+        verify(eventPublisher).publishManagerApproved(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

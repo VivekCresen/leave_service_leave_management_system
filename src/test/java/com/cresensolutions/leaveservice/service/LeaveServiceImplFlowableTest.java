@@ -3,6 +3,7 @@ package com.cresensolutions.leaveservice.service;
 import com.cresensolutions.leaveservice.common.LeaveConstants;
 import com.cresensolutions.leaveservice.dto.*;
 import com.cresensolutions.leaveservice.exception.ResourceNotFoundException;
+import com.cresensolutions.leaveservice.messaging.LeaveEventPublisher;
 import com.cresensolutions.leaveservice.model.*;
 import com.cresensolutions.leaveservice.repository.*;
 import com.cresensolutions.leaveservice.service.Impl.LeaveServiceImpl;
@@ -42,6 +43,7 @@ class LeaveServiceImplFlowableTest {
     @Mock private Executor leaveTaskExecutor;
     @Mock private RuntimeService runtimeService;
     @Mock private TaskService taskService;
+    @Mock private LeaveEventPublisher eventPublisher;
 
     @InjectMocks private LeaveServiceImpl leaveService;
 
@@ -239,7 +241,11 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.resolveApprover(execution);
 
-        verify(leaveEmailService).sendPendingApprovalReminder(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyLong());
+        verify(eventPublisher).publishLeaveReminder(
+                eq(10L), eq("PENDING_APPROVAL"),
+                eq("manager@cresensolutions.com"), eq("admin@cresensolutions.com"),
+                eq("John Doe"), eq("Annual Leave"), eq("Vacation"),
+                eq("proc-1"), isNull());
         verify(leaveRepository).save(leaveRecord);
     }
 
@@ -273,17 +279,11 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.resolveApprover(execution);
 
-        verify(leaveEmailService).sendPendingApprovalReminder(
-                any(),
-                eq("John Doe"),
-                eq("Employee"),
-                any(),
-                any(),
-                any(),
-                eq("Manager One"),
-                eq("Manager"),
-                any(),
-                eq(10L));
+        verify(eventPublisher).publishLeaveReminder(
+                eq(10L), eq("PENDING_APPROVAL"),
+                eq("manager@cresensolutions.com"), eq("admin@cresensolutions.com"),
+                eq("John Doe"), eq("Annual Leave"), eq("Vacation"),
+                eq("proc-1"), isNull());
     }
 
     @Test
@@ -575,9 +575,11 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendReminderEmail(execution);
 
-        verify(leaveReminderDispatchService).dispatchReminder(
-                10L, "4DAY", "manager@cresensolutions.com", "admin@cresensolutions.com",
-                "john", "Annual Leave", "Vacation", "proc-1", "task-1");
+        verify(eventPublisher).publishLeaveReminder(
+                eq(10L), eq("4DAY"),
+                eq("manager@cresensolutions.com"), eq("admin@cresensolutions.com"),
+                eq("john"), eq("Annual Leave"), eq("Vacation"),
+                eq("proc-1"), eq("task-1"));
     }
 
     @Test
@@ -587,7 +589,7 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendReminderEmail(execution);
 
-        verifyNoInteractions(leaveReminderDispatchService);
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -597,7 +599,7 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendReminderEmail(execution);
 
-        verifyNoInteractions(leaveReminderDispatchService);
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
@@ -615,7 +617,7 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendReminderEmail(execution);
 
-        verify(leaveReminderDispatchService).dispatchReminder(
+        verify(eventPublisher).publishLeaveReminder(
                 eq(10L), eq("2DAY"), eq(""), eq(""), eq("John"), any(), eq(""), any(), any());
     }
 
@@ -635,8 +637,8 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendReminderEmail(execution);
 
-        verify(leaveReminderDispatchService).dispatchReminder(
-                any(), any(), any(), any(), eq("john"), any(), any(), any(), any());
+        verify(eventPublisher).publishLeaveReminder(
+                anyLong(), any(), any(), any(), eq("john"), any(), any(), any(), any());
     }
 
 
@@ -659,10 +661,9 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendLeaveStatusMail(execution);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                argThat(r -> r.contains("john@cresensolutions.com")),
-                eq("John Doe"), eq("Annual Leave"), eq(List.of(ld)),
-                eq("Vacation"), eq("APPROVED"), eq("manager1"), any(), isNull());
+        verify(eventPublisher).publishLeaveApproved(
+                eq(10L), eq(1L), eq("john"), eq("john@cresensolutions.com"),
+                eq("Annual Leave"), eq(1), any(), eq("manager1"), eq("Manager"), anyDouble());
     }
 
     @Test
@@ -686,17 +687,9 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendLeaveStatusMail(execution);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                argThat(recipients -> recipients.contains("john@cresensolutions.com")
-                        && recipients.contains("jane@cresensolutions.com")),
-                eq("John Doe"),
-                eq("Annual Leave"),
-                eq(List.of(ld)),
-                eq("Vacation"),
-                eq("APPROVED"),
-                eq("manager1"),
-                any(),
-                isNull());
+        verify(eventPublisher).publishLeaveApproved(
+                eq(10L), eq(1L), eq("john"), eq("john@cresensolutions.com"),
+                eq("Annual Leave"), eq(1), any(), eq("manager1"), eq("Manager"), anyDouble());
     }
 
     @Test
@@ -751,8 +744,9 @@ class LeaveServiceImplFlowableTest {
 
         leaveService.sendLeaveStatusMail(execution);
 
-        verify(leaveEmailService).sendLeaveStatusNotification(
-                any(), eq(LeaveConstants.DEFAULT_EMPLOYEE_NAME), any(), any(), any(), any(), any(), any(), any());
+        verify(eventPublisher).publishLeaveApproved(
+                eq(10L), eq(1L), eq("john"), eq("john@cresensolutions.com"),
+                eq("Annual Leave"), eq(1), any(), eq("manager1"), eq("Manager"), anyDouble());
     }
 
 

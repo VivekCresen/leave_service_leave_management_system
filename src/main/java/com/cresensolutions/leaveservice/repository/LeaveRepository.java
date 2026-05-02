@@ -146,4 +146,25 @@ public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
               AND UPPER(COALESCE(l.status, 'PENDING')) = 'APPROVED'
             """, nativeQuery = true)
     Double sumApprovedLeaveDays(@Param("userId") Long userId, @Param("leaveTypeId") Integer leaveTypeId);
+
+    /** Cross-service #19 — find all PENDING leaves for a user being deleted. */
+    @Query(value = """
+            SELECT l.* FROM leave_schema.leave_application l
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE UPPER(u.user_name) = UPPER(:username)
+              AND UPPER(COALESCE(l.status, 'PENDING')) = 'PENDING'
+            """, nativeQuery = true)
+    List<LeaveRecord> findPendingByUsername(@Param("username") String username);
+
+    /** Cross-service #20 — check if a user has an approved leave on a specific date. */
+    @Query(value = """
+            SELECT COUNT(*) > 0
+            FROM leave_schema.leave_dates ld
+            INNER JOIN leave_schema.leave_application l ON ld.leave_application_id = l.id
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE UPPER(u.user_name) = UPPER(:username)
+              AND ld.leave_date = :date
+              AND UPPER(COALESCE(l.status, 'PENDING')) = 'APPROVED'
+            """, nativeQuery = true)
+    boolean existsApprovedLeaveOnDate(@Param("username") String username, @Param("date") java.time.LocalDate date);
 }

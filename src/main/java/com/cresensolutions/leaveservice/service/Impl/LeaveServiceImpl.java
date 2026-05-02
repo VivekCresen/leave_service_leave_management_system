@@ -30,6 +30,7 @@ import com.cresensolutions.leaveservice.service.LeaveBalanceService;
 import com.cresensolutions.leaveservice.service.LeaveEmailService;
 import com.cresensolutions.leaveservice.service.LeaveReminderDispatchService;
 import com.cresensolutions.leaveservice.service.LeaveService;
+import com.cresensolutions.leaveservice.messaging.LeaveEventPublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -87,6 +88,7 @@ public class LeaveServiceImpl implements LeaveService {
     private final RuntimeService runtimeService;
     private final TaskService taskService;
     private final String loginUrl;
+    private final LeaveEventPublisher eventPublisher;
 
     public LeaveServiceImpl(
             LeaveRepository leaveRepository,
@@ -101,7 +103,8 @@ public class LeaveServiceImpl implements LeaveService {
             @Qualifier("leaveTaskExecutor") Executor leaveTaskExecutor,
             RuntimeService runtimeService,
             TaskService taskService,
-            @Value("${app.login-url:http://localhost:3000/login}") String loginUrl
+            @Value("${app.login-url:http://localhost:3000/login}") String loginUrl,
+            LeaveEventPublisher eventPublisher
     ) {
         this.leaveRepository = leaveRepository;
         this.leaveDateRepository = leaveDateRepository;
@@ -116,6 +119,7 @@ public class LeaveServiceImpl implements LeaveService {
         this.runtimeService = runtimeService;
         this.taskService = taskService;
         this.loginUrl = loginUrl;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -161,8 +165,16 @@ public class LeaveServiceImpl implements LeaveService {
 
         startApprovalProcess(saved, user, request);
 
+        // Notify manager via queue — decoupled from the request thread
+        List<String> dateStrings = dates.stream()
+                .map(d -> d.getLeaveDate().toString()).toList();
+        String managerUsername = user.getCreatedBy() != null ? user.getCreatedBy() : "";
+        eventPublisher.publishLeaveSubmitted(
+                saved.getId(), user.getId(), user.getUserName(),
+                saved.getLeaveType(), dateStrings, managerUsername);
+
         return toLeaveResponse(saved);
-    }
+    }   
 
     @Override
     public LeaveResponse getLeaveById(Long leaveId) {
@@ -232,20 +244,22 @@ public class LeaveServiceImpl implements LeaveService {
             leave.appendTrailEntry(LeaveConstants.STATUS_MANAGER_APPROVED, request.actorUsername(),
                     null, null,
                     "Approved by manager " + request.actorUsername() + ". Pending admin final approval.");
-            leaveRepository.save(leave);
+            LeaveRecord savedManagerApproved = leaveRepository.save(leave);
 
             List<LeaveDate> dates = leaveDateRepository.findByApplicationId(leave.getId());
-            String employeeName = leave.getUser() != null && leave.getUser().getFullName() != null
-                    ? leave.getUser().getFullName() : LeaveConstants.DEFAULT_EMPLOYEE_NAME;
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
             List<String> adminEmails = userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN).stream()
                     .map(UserProfile::getEmailId).filter(e -> e != null && !e.isBlank()).toList();
-            leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                    adminEmails, resolveStatusRecipients(leave), employeeName,
-                    leave.getLeaveType(), dates, leave.getReason(),
-                    resolveActorDisplayName(request.actorUsername()), leaveId);
+            log.debug("[LeaveService] Notifying {} admin(s) for manager approval of leaveId={}",
+                    adminEmails.size(), leaveId);
+            eventPublisher.publishManagerApproved(
+                    savedManagerApproved.getId(), savedManagerApproved.getUserId(),
+                    savedManagerApproved.getEmailId(), savedManagerApproved.getEmailId(),
+                    savedManagerApproved.getLeaveType(), savedManagerApproved.getLeaveTypeId(),
+                    dateStrings, request.actorUsername(),
+                    resolveActorRoleDisplay(request.actorUsername()));
 
-            return toLeaveResponse(findLeaveOrThrow(leaveId));
-        }
+            return toLeaveResponse(findLeaveOrThrow(leaveId));        }
 
         if (LeaveConstants.STATUS_APPROVED.equals(status)) {
             if (!LeaveConstants.STATUS_MANAGER_APPROVED.equals(leave.getStatus())) {
@@ -277,27 +291,29 @@ public class LeaveServiceImpl implements LeaveService {
                     .sum();
             final Long userId = leave.getUserId();
             final Integer leaveTypeId = leave.getLeaveTypeId();
-            CompletableFuture.runAsync(
-                    () -> leaveBalanceService.deductLeaveBalance(userId, leaveTypeId, days),
-                    leaveTaskExecutor
-            ).exceptionally(ex -> {
-                log.error("[LeaveService] Failed to deduct balance for userId={}: {}", userId, ex.getMessage());
-                return null;
-            });
 
-            leaveEmailService.sendLeaveStatusNotification(
-                    resolveStatusRecipients(saved), employeeName, saved.getLeaveType(), dates,
-                    saved.getReason(), status,
-                    resolveActorDisplayName(request.actorUsername()),
-                    resolveActorRoleDisplay(request.actorUsername()), null);
+            // Publish balance deduction to queue — retries on failure, DLQ on exhaustion
+            eventPublisher.publishBalanceDeduct(userId, leaveTypeId, days, saved.getId());
+
+            // Publish approved event — listener sends email asynchronously
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            eventPublisher.publishLeaveApproved(
+                    saved.getId(), userId, saved.getEmailId(), saved.getEmailId(),
+                    saved.getLeaveType(), leaveTypeId, dateStrings,
+                    resolveActorDisplayName(request.actorUsername()), resolveActorRoleDisplay(request.actorUsername()), days);
 
             return toLeaveResponse(saved);
         }
 
         if (LeaveConstants.STATUS_REJECTED.equals(status)) {
-            Task activeTask = findTaskByDefinitionKey(leaveId, "task_manager_approval");
-            if (activeTask == null) {
+            Task activeTask;
+            if (LeaveConstants.STATUS_MANAGER_APPROVED.equalsIgnoreCase(leave.getStatus())) {
                 activeTask = findTaskByDefinitionKey(leaveId, "task_admin_approval");
+            } else {
+                activeTask = findTaskByDefinitionKey(leaveId, "task_manager_approval");
+                if (activeTask == null) {
+                    activeTask = findTaskByDefinitionKey(leaveId, "task_admin_approval");
+                }
             }
             if (activeTask != null) {
                 Map<String, Object> vars = new HashMap<>();
@@ -318,14 +334,12 @@ public class LeaveServiceImpl implements LeaveService {
                     "Rejected by " + resolveActorDisplayName(request.actorUsername()) + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : ""));
             LeaveRecord saved = leaveRepository.save(leave);
             List<LeaveDate> dates = leaveDateRepository.findByApplicationId(saved.getId());
-            String employeeName = saved.getUser() != null && saved.getUser().getFullName() != null
-                    ? saved.getUser().getFullName() : LeaveConstants.DEFAULT_EMPLOYEE_NAME;
 
-            leaveEmailService.sendLeaveStatusNotification(
-                    resolveStatusRecipients(saved), employeeName, saved.getLeaveType(), dates,
-                    saved.getReason(), status,
-                    resolveActorDisplayName(request.actorUsername()),
-                    resolveActorRoleDisplay(request.actorUsername()),
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            eventPublisher.publishLeaveRejected(
+                    saved.getId(), saved.getUserId(), saved.getEmailId(), saved.getEmailId(),
+                    saved.getLeaveType(), saved.getLeaveTypeId(), dateStrings,
+                    request.actorUsername(), resolveActorRoleDisplay(request.actorUsername()),
                     request.rejectionReason());
 
             return toLeaveResponse(saved);
@@ -428,12 +442,12 @@ public class LeaveServiceImpl implements LeaveService {
         if (activeTask != null) {
             if (!allRejected && !rejectedDates.isEmpty()) {
                 leaveDateRepository.deleteAllById(rejectedDates.stream().map(LeaveDate::getId).toList());
-                // Immediately notify employee about rejected dates
-                leaveEmailService.sendLeaveStatusNotification(
-                        resolveStatusRecipients(leave), employeeName, leave.getLeaveType(),
-                        rejectedDates, leave.getReason(), LeaveConstants.STATUS_REJECTED,
-                        resolveActorDisplayName(request.actorUsername()),
-                        resolveActorRoleDisplay(request.actorUsername()),
+                // Notify employee about rejected dates via queue
+                List<String> rejectedStrings = rejectedDates.stream().map(d -> d.getLeaveDate().toString()).toList();
+                eventPublisher.publishLeaveRejected(
+                        leaveId, leave.getUserId(), leave.getEmailId(), leave.getEmailId(),
+                        leave.getLeaveType(), leave.getLeaveTypeId(), rejectedStrings,
+                        request.actorUsername(), resolveActorRoleDisplay(request.actorUsername()),
                         request.rejectionReason());
             }
 
@@ -482,11 +496,12 @@ public class LeaveServiceImpl implements LeaveService {
                         "All dates rejected by " + resolveActorDisplayName(request.actorUsername())
                         + (request.rejectionReason() != null && !request.rejectionReason().isBlank() ? ": " + request.rejectionReason() : ""));
                 LeaveRecord saved = leaveRepository.save(leave);
-                leaveEmailService.sendLeaveStatusNotification(
-                        resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
-                        rejectedDates, saved.getReason(), LeaveConstants.STATUS_REJECTED,
-                        resolveActorDisplayName(request.actorUsername()),
-                        resolveActorRoleDisplay(request.actorUsername()), request.rejectionReason());
+                List<String> rejectedStrings = rejectedDates.stream().map(d -> d.getLeaveDate().toString()).toList();
+                eventPublisher.publishLeaveRejected(
+                        saved.getId(), saved.getUserId(), saved.getEmailId(), saved.getEmailId(),
+                        saved.getLeaveType(), saved.getLeaveTypeId(), rejectedStrings,
+                        request.actorUsername(), resolveActorRoleDisplay(request.actorUsername()),
+                        request.rejectionReason());
                 return toLeaveResponse(saved);
             }
 
@@ -505,14 +520,19 @@ public class LeaveServiceImpl implements LeaveService {
                     .map(UserProfile::getEmailId).filter(e -> e != null && !e.isBlank()).toList();
             String managerDisplayName = resolveActorDisplayName(request.actorUsername());
 
-            leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                    adminEmails, resolveStatusRecipients(saved), employeeName,
-                    saved.getLeaveType(), remainingDates, saved.getReason(), managerDisplayName, leaveId);
+            // Notify admin + employee via queue
+            List<String> remainingStrings = remainingDates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            eventPublisher.publishManagerApproved(
+                    saved.getId(), saved.getUserId(), saved.getEmailId(), saved.getEmailId(),
+                    saved.getLeaveType(), saved.getLeaveTypeId(), remainingStrings,
+                    request.actorUsername(), resolveActorRoleDisplay(request.actorUsername()));
 
+            // Notify employee about any rejected dates via queue
             if (!rejectedDates.isEmpty()) {
-                leaveEmailService.sendLeaveStatusNotification(
-                        resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
-                        rejectedDates, saved.getReason(), LeaveConstants.STATUS_REJECTED,
+                List<String> rejectedStrings = rejectedDates.stream().map(d -> d.getLeaveDate().toString()).toList();
+                eventPublisher.publishLeaveRejected(
+                        saved.getId(), saved.getUserId(), saved.getEmailId(), saved.getEmailId(),
+                        saved.getLeaveType(), saved.getLeaveTypeId(), rejectedStrings,
                         managerDisplayName, resolveActorRoleDisplay(request.actorUsername()),
                         request.rejectionReason());
             }
@@ -541,20 +561,23 @@ public class LeaveServiceImpl implements LeaveService {
                         .mapToDouble(d -> d.getDayType() != null
                                 && d.getDayType().contains(LeaveConstants.DAY_TYPE_HALF_KEYWORD) ? 0.5 : 1.0)
                         .sum();
-                CompletableFuture.runAsync(
-                        () -> leaveBalanceService.deductLeaveBalance(userId, leaveTypeId, days),
-                        leaveTaskExecutor
-                ).exceptionally(ex -> {
-                    log.error("[LeaveService] Failed to deduct balance for userId={}: {}", userId, ex.getMessage());
-                    return null;
-                });
+                // Queue-based deduction — retries on failure, DLQ on exhaustion
+                eventPublisher.publishBalanceDeduct(userId, leaveTypeId, days, saved.getId());
             }
 
-            leaveEmailService.sendPartialLeaveStatusNotification(
-                    resolveStatusRecipients(saved), employeeName, saved.getLeaveType(),
-                    approvedDates, rejectedDates, saved.getReason(),
-                    resolveActorDisplayName(request.actorUsername()),
-                    resolveActorRoleDisplay(request.actorUsername()), request.rejectionReason());
+            // Publish partial decision event — listener sends the combined email
+            List<String> approvedStrings = approvedDates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            List<String> rejectedStrings = rejectedDates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            double totalApprovedDays = approvedDates.stream()
+                    .mapToDouble(d -> d.getDayType() != null
+                            && d.getDayType().contains(LeaveConstants.DAY_TYPE_HALF_KEYWORD) ? 0.5 : 1.0)
+                    .sum();
+            eventPublisher.publishPartialDecision(
+                    saved.getId(), saved.getUserId(), saved.getEmailId(), saved.getEmailId(),
+                    saved.getLeaveType(), saved.getLeaveTypeId(),
+                    approvedStrings, rejectedStrings,
+                    request.actorUsername(), resolveActorRoleDisplay(request.actorUsername()),
+                    request.rejectionReason(), totalApprovedDays);
             return toLeaveResponse(saved);
         }
     }
@@ -600,9 +623,16 @@ public class LeaveServiceImpl implements LeaveService {
         if (!LeaveConstants.STATUS_PENDING.equalsIgnoreCase(leave.getStatus())) {
             throw new IllegalArgumentException("Only PENDING leave applications can be deleted.");
         }
+        String username = leave.getUser() != null ? leave.getUser().getUserName() : "";
+        String leaveType = leave.getLeaveType();
+        Long userId = leave.getUserId();
+        String managerUsername = leave.getUser() != null ? leave.getUser().getCreatedBy() : "";
+
         leaveNotifyUserRepository.deleteByLeaveId(leaveId);
         leaveDateRepository.deleteByApplicationId(leaveId);
         leaveRepository.deleteById(leaveId);
+
+        eventPublisher.publishLeaveCancelled(leaveId, userId, username, leaveType, managerUsername);
     }
 
     @Override
@@ -752,6 +782,11 @@ public class LeaveServiceImpl implements LeaveService {
         execution.setVariable("managerEmail", managerEmail != null ? managerEmail : "");
         execution.setVariable("adminEmail", adminEmail);
 
+        final String resolvedManagerUsername = managerUsername;
+        String managerDisplayName = userProfileRepository.findByUserName(resolvedManagerUsername)
+                .map(m -> m.getFullName() != null && !m.getFullName().isBlank() ? m.getFullName() : resolvedManagerUsername)
+                .orElse(resolvedManagerUsername);
+
         // Resolve employee display name: prefer fullName, fall back to userName, then username variable
         String employeeDisplayName = user.getFullName();
         if (employeeDisplayName == null || employeeDisplayName.isBlank()) {
@@ -770,26 +805,16 @@ public class LeaveServiceImpl implements LeaveService {
                 List<LeaveDate> dates = leaveDateRepository.findByApplicationId(leaveId);
                 List<String> recipients = buildRecipients(finalManagerEmail, adminEmail);
                 if (!recipients.isEmpty()) {
-                    // Resolve manager's display name and role for the email
-                    String managerDisplayName = userProfileRepository.findByUserName(finalManagerUsername)
-                            .map(m -> m.getFullName() != null && !m.getFullName().isBlank()
-                                    ? m.getFullName() : finalManagerUsername)
-                            .orElse(finalManagerUsername);
-                    String managerDisplayRole = userProfileRepository.findByUserName(finalManagerUsername)
-                            .map(m -> resolveRoleDisplay(m.getRole()))
-                            .orElse("");
-                    String employeeDisplayRole = resolveRoleDisplay(user.getRole());
-                    leaveEmailService.sendPendingApprovalReminder(
-                            recipients,
+                    eventPublisher.publishLeaveReminder(
+                            leaveId,
+                            "PENDING_APPROVAL",
+                            finalManagerEmail != null ? finalManagerEmail : "",
+                            adminEmail,
                             finalEmployeeDisplayName,
-                            employeeDisplayRole,
-                            leave.getLeaveType(),
-                            dates,
+                            leave.getLeaveName(),
                             leave.getReason(),
-                            managerDisplayName,
-                            managerDisplayRole,
-                            loginUrl,
-                            leaveId
+                            execution.getProcessInstanceId(),
+                            null
                     );
                 }
                 execution.setVariable("leaveType", leave.getLeaveType());
@@ -798,7 +823,7 @@ public class LeaveServiceImpl implements LeaveService {
                         LeaveConstants.SYSTEM_ACTOR,
                         execution.getProcessInstanceId(),
                         null,
-                        "Assigned to approver: " + finalManagerUsername
+                        "Assigned to approver: " + managerDisplayName
                 );
                 leaveRepository.save(leave);
             });
@@ -864,20 +889,18 @@ public class LeaveServiceImpl implements LeaveService {
         String leaveType = stringValue(execution.getVariable("leaveType"));
         String reason = stringValue(execution.getVariable("reason"));
 
-        boolean sent = leaveReminderDispatchService.dispatchReminder(
-                leaveId,
-                reminderType,
+        // Publish to queue — if email is down during Flowable execution,
+        // the message waits in queue instead of failing the process
+        eventPublisher.publishLeaveReminder(
+                leaveId, reminderType,
                 managerEmail != null ? managerEmail : "",
                 adminEmail != null ? adminEmail : "",
-                employeeName,
-                leaveType,
+                employeeName, leaveType,
                 reason != null ? reason : "",
                 execution.getProcessInstanceId(),
                 execution.getCurrentActivityId()
         );
-        if (!sent) {
-            log.debug("[SendReminderEmail] Skipped {} reminder for leaveId={}", reminderType, leaveId);
-        }
+        log.debug("[SendReminderEmail] Queued {} reminder for leaveId={}", reminderType, leaveId);
     }
 
     @Override
@@ -942,31 +965,24 @@ public class LeaveServiceImpl implements LeaveService {
     public void notifyAdminForFinalApproval(DelegateExecution execution) {
         Long leaveId = longValue(execution.getVariable("leaveId"));
         String managerUsername = stringValue(execution.getVariable("actorUsername"));
-        String employeeName = stringValue(execution.getVariable("employeeName"));
-        if (employeeName == null || employeeName.isBlank()) employeeName = LeaveConstants.DEFAULT_EMPLOYEE_NAME;
 
-        List<String> adminEmails = userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN).stream()
-                .map(UserProfile::getEmailId)
-                .filter(e -> e != null && !e.isBlank())
-                .toList();
-
-        if (leaveId == null || adminEmails.isEmpty()) {
-            log.warn("[NotifyAdminForFinalApproval] Missing leaveId or no admin emails, skipping.");
+        if (leaveId == null) {
+            log.warn("[NotifyAdminForFinalApproval] Missing leaveId, skipping.");
             return;
         }
 
-        LeaveRecord leave = leaveRepository.findDetailedById(leaveId).orElse(null);
-        if (leave == null) return;
-
-        List<LeaveDate> dates = leaveDateRepository.findByApplicationId(leaveId);
-        List<String> employeeEmails = resolveStatusRecipients(leave);
-        String managerDisplayName = resolveActorDisplayName(managerUsername);
-
-        leaveEmailService.sendManagerApprovedPendingAdminNotification(
-                adminEmails, employeeEmails, employeeName,
-                leave.getLeaveType(), dates, leave.getReason(), managerDisplayName, leaveId
-        );
-        log.info("[NotifyAdminForFinalApproval] leaveId={} notified {} admin(s)", leaveId, adminEmails.size());
+        Optional<LeaveRecord> leaveOpt = leaveRepository.findDetailedById(leaveId);
+        List<String> adminEmails = userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN).stream()
+                .map(UserProfile::getEmailId).filter(e -> e != null && !e.isBlank()).toList();
+        leaveOpt.ifPresent(leave -> {
+            List<LeaveDate> dates = leaveDateRepository.findByApplicationId(leaveId);
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            eventPublisher.publishAdminNotify(
+                    leaveId, leave.getUserId(), leave.getEmailId(), leave.getEmailId(),
+                    leave.getLeaveType(), leave.getLeaveTypeId(), dateStrings,
+                    managerUsername, "MANAGER");
+        });
+        log.info("[NotifyAdminForFinalApproval] Queued admin notification for leaveId={}", leaveId);
     }
 
     @Override
@@ -991,20 +1007,45 @@ public class LeaveServiceImpl implements LeaveService {
             return;
         }
 
-        log.info("[SendLeaveStatusMail] Sending {} mail leaveId={} to {} recipient(s)",
+        log.info("[SendLeaveStatusMail] Queuing {} mail leaveId={} to {} recipient(s)",
                 status, leaveId, recipients.size());
         String actorUsername = actionBy != null ? actionBy : LeaveConstants.SYSTEM_DISPLAY_NAME;
-        leaveEmailService.sendLeaveStatusNotification(
-                recipients,
-                employeeName,
-                leaveType != null ? leaveType : "",
-                dates,
-                reason != null ? reason : "",
-                status != null ? status : "",
-                resolveActorDisplayName(actorUsername),
-                resolveActorRoleDisplay(actorUsername),
-                rejectionReason
-        );
+
+        // Resolve employee username for the event
+        String username = leaveId != null
+                ? leaveRepository.findDetailedById(leaveId)
+                        .map(l -> l.getUser() != null ? l.getUser().getUserName() : "")
+                        .orElse("")
+                : "";
+        Long userId = leaveId != null
+                ? leaveRepository.findDetailedById(leaveId).map(LeaveRecord::getUserId).orElse(null)
+                : null;
+        Integer leaveTypeId = leaveId != null
+                ? leaveRepository.findDetailedById(leaveId).map(LeaveRecord::getLeaveTypeId).orElse(null)
+                : null;
+        String employeeEmail = recipients.isEmpty() ? "" : recipients.get(0);
+
+        if (LeaveConstants.STATUS_APPROVED.equals(status)) {
+            double days = dates.stream()
+                    .mapToDouble(d -> d.getDayType() != null
+                            && d.getDayType().contains(LeaveConstants.DAY_TYPE_HALF_KEYWORD) ? 0.5 : 1.0)
+                    .sum();
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            String actorRole = resolveActorRoleForLeave(actorUsername, leaveId);
+            eventPublisher.publishLeaveApproved(leaveId, userId, username, employeeEmail,
+                    leaveType != null ? leaveType : "", leaveTypeId, dateStrings,
+                    actorUsername, actorRole, days);
+        } else if (LeaveConstants.STATUS_REJECTED.equals(status)) {
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            eventPublisher.publishLeaveRejected(leaveId, userId, username, employeeEmail,
+                    leaveType != null ? leaveType : "", leaveTypeId, dateStrings,
+                    actorUsername, resolveActorRoleDisplay(actorUsername), rejectionReason);
+        } else if (LeaveConstants.STATUS_MANAGER_APPROVED.equals(status)) {
+            List<String> dateStrings = dates.stream().map(d -> d.getLeaveDate().toString()).toList();
+            eventPublisher.publishManagerApproved(leaveId, userId, username, employeeEmail,
+                    leaveType != null ? leaveType : "", leaveTypeId, dateStrings,
+                    actorUsername, resolveActorRoleDisplay(actorUsername));
+        }
     }
 
     @Override
@@ -1373,6 +1414,28 @@ public class LeaveServiceImpl implements LeaveService {
                         u.getFullName() != null && !u.getFullName().isBlank() ? u.getFullName() : username,
                         resolveRoleDisplay(u.getRole())))
                 .orElse(new ActorInfo(username, ""));
+    }
+
+    private String resolveActorRoleForLeave(String actorUsername, Long leaveId) {
+        if (actorUsername == null || actorUsername.isBlank()) return "";
+        // First try to resolve from user profile
+        Optional<UserProfile> actorOpt = userProfileRepository.findByUserName(actorUsername);
+        if (actorOpt.isPresent()) {
+            return resolveRoleDisplay(actorOpt.get().getRole());
+        }
+        // Fall back: if actor is the leave owner's manager (createdBy), they're a Manager
+        if (leaveId != null) {
+            return leaveRepository.findDetailedById(leaveId)
+                    .map(leave -> {
+                        UserProfile owner = leave.getUser();
+                        if (owner != null && actorUsername.equals(owner.getCreatedBy())) {
+                            return "Manager";
+                        }
+                        return "";
+                    })
+                    .orElse("");
+        }
+        return "";
     }
 
     private String resolveActorDisplayName(String username) {

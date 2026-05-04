@@ -246,4 +246,220 @@ class ChatHistoryServiceImplTest {
         // title should be truncated to 80 chars + "..."
         assertThat(captor.getValue().getConversations()).contains("...");
     }
+
+    // ── active session meta reuse (non-expired) ───────────────────────────────
+
+    @Test
+    void addQaPair_activeSessionMeta_reusesSameConversation() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.empty());
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // First call — creates chat_001 and stores it in activeSessionMeta
+        chatHistoryService.addQaPair("john", null, false, qaPair);
+
+        ArgumentCaptor<ChatHistory> captor1 = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository, times(1)).save(captor1.capture());
+        String firstConversations = captor1.getValue().getConversations();
+        assertThat(firstConversations).contains("chat_001");
+
+        // Second call — no explicit conversationId, not newConversation
+        // activeSessionMeta is set, session is not expired → reuses chat_001
+        ChatHistory existing = captor1.getValue();
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+
+        ChatHistoryService.QaPair secondPair = new ChatHistoryService.QaPair(
+            "Second question", "Second answer", "direct_db", 80L,
+            OffsetDateTime.now(), OffsetDateTime.now()
+        );
+        chatHistoryService.addQaPair("john", null, false, secondPair);
+
+        ArgumentCaptor<ChatHistory> captor2 = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository, times(2)).save(captor2.capture());
+        // Both entries should be in chat_001
+        assertThat(captor2.getValue().getConversations()).contains("chat_001");
+        assertThat(captor2.getValue().getConversations()).contains("Second question");
+    }
+
+    // ── explicit conversationId that already exists + newConversation=false ──
+
+    @Test
+    void addQaPair_existingConversationId_notNew_touchesMeta() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+
+        ChatHistory existing = new ChatHistory(user);
+        existing.setConversations("{\"chat_005\":[{\"question\":\"old\",\"chatTitle\":\"old\"}]}");
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // First call to populate activeSessionMeta with chat_005
+        chatHistoryService.addQaPair("john", "chat_005", false, qaPair);
+
+        // Second call with same conversationId — meta.touch() is called
+        ChatHistory updated = new ChatHistory(user);
+        updated.setConversations("{\"chat_005\":[{\"question\":\"old\",\"chatTitle\":\"old\"}]}");
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(updated));
+
+        chatHistoryService.addQaPair("john", "chat_005", false, qaPair);
+
+        verify(chatHistoryRepository, times(2)).save(any());
+    }
+
+    // ── normalizeConversationId — invalid format returns null ─────────────────
+
+    @Test
+    void addQaPair_invalidConversationIdFormat_ignored() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.empty());
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // "session-abc" doesn't match "^chat_\\d+$" → normalizeConversationId returns null
+        // → falls through to create a new conversation
+        chatHistoryService.addQaPair("john", "session-abc", false, qaPair);
+
+        ArgumentCaptor<ChatHistory> captor = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository).save(captor.capture());
+        // Should have created chat_001 (new conversation)
+        assertThat(captor.getValue().getConversations()).contains("chat_001");
+    }
+
+    // ── newConversation=true with explicit valid conversationId ───────────────
+
+    @Test
+    void addQaPair_newConversationTrue_withValidConversationId_createsNew() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+
+        ChatHistory existing = new ChatHistory(user);
+        existing.setConversations("{\"chat_003\":[{\"question\":\"q\",\"chatTitle\":\"t\"}]}");
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // chat_003 exists + newConversation=true → should create chat_004
+        chatHistoryService.addQaPair("john", "chat_003", true, qaPair);
+
+        ArgumentCaptor<ChatHistory> captor = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository).save(captor.capture());
+        assertThat(captor.getValue().getConversations()).contains("chat_004");
+    }
+
+    // ── legacy migration — qa_id override ────────────────────────────────────
+
+    @Test
+    void addQaPair_legacyArrayWithQaId_preservesQaId() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+
+        String legacyJson = "[{\"title\":\"Session 1\",\"qa_pairs\":[{" +
+            "\"qa_id\":\"custom-id-123\"," +
+            "\"question\":{\"content\":\"legacy question\"}," +
+            "\"answer\":{\"content\":\"legacy answer\",\"source\":\"ollama\",\"latency_ms\":50}," +
+            "\"asked_at\":\"2024-06-01T09:00:00+00:00\"," +
+            "\"answered_at\":\"2024-06-01T09:00:01+00:00\"" +
+            "}]}]";
+
+        ChatHistory existing = new ChatHistory(user);
+        existing.setConversations(legacyJson);
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        chatHistoryService.addQaPair("john", null, false, qaPair);
+
+        ArgumentCaptor<ChatHistory> captor = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository).save(captor.capture());
+        // The migrated entry should have the custom qa_id as request_id
+        assertThat(captor.getValue().getConversations()).contains("custom-id-123");
+    }
+
+    // ── parseOffsetDateTime — invalid date string falls back to now ───────────
+
+    @Test
+    void addQaPair_legacyArrayWithInvalidDates_fallsBackToNow() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+
+        String legacyJson = "[{\"title\":\"Session\",\"qa_pairs\":[{" +
+            "\"question\":{\"content\":\"q\"}," +
+            "\"answer\":{\"content\":\"a\",\"source\":\"ollama\",\"latency_ms\":0}," +
+            "\"asked_at\":\"NOT_A_DATE\"," +
+            "\"answered_at\":\"ALSO_NOT_A_DATE\"" +
+            "}]}]";
+
+        ChatHistory existing = new ChatHistory(user);
+        existing.setConversations(legacyJson);
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Should not throw — invalid dates fall back to OffsetDateTime.now()
+        chatHistoryService.addQaPair("john", null, false, qaPair);
+
+        verify(chatHistoryRepository).save(any());
+    }
+
+    // ── buildChatTitle — blank question uses default title ────────────────────
+
+    @Test
+    void addQaPair_blankQuestion_usesDefaultTitle() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.empty());
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ChatHistoryService.QaPair blankQPair = new ChatHistoryService.QaPair(
+            "   ", "answer", "direct_db", 10L, OffsetDateTime.now(), OffsetDateTime.now()
+        );
+
+        chatHistoryService.addQaPair("john", null, false, blankQPair);
+
+        ArgumentCaptor<ChatHistory> captor = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository).save(captor.capture());
+        assertThat(captor.getValue().getConversations()).contains("Chat session");
+    }
+
+    // ── null conversations string resets gracefully ───────────────────────────
+
+    @Test
+    void addQaPair_nullConversationsString_resetsAndSaves() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+
+        ChatHistory existing = new ChatHistory(user);
+        existing.setConversations(null);
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        chatHistoryService.addQaPair("john", null, false, qaPair);
+
+        verify(chatHistoryRepository).save(any());
+    }
+
+    // ── username with leading/trailing whitespace is trimmed ─────────────────
+
+    @Test
+    void addQaPair_usernameWithWhitespace_isTrimmed() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.empty());
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        chatHistoryService.addQaPair("  john  ", null, false, qaPair);
+
+        verify(userProfileRepository).findByUserNameIgnoreCase("john");
+        verify(chatHistoryRepository).save(any());
+    }
+
+    // ── chatTitle preserved from first entry on subsequent Q&A ───────────────
+
+    @Test
+    void addQaPair_secondEntryInConversation_preservesChatTitle() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+
+        // Existing conversation with one entry that has a chatTitle
+        String existingJson = "{\"chat_001\":[{\"question\":\"First question\",\"chatTitle\":\"First question\"}]}";
+        ChatHistory existing = new ChatHistory(user);
+        existing.setConversations(existingJson);
+        when(chatHistoryRepository.findByUserId(1L)).thenReturn(Optional.of(existing));
+        when(chatHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        chatHistoryService.addQaPair("john", "chat_001", false, qaPair);
+
+        ArgumentCaptor<ChatHistory> captor = ArgumentCaptor.forClass(ChatHistory.class);
+        verify(chatHistoryRepository).save(captor.capture());
+        // The chatTitle of the second entry should match the first entry's title
+        assertThat(captor.getValue().getConversations()).contains("First question");
+    }
 }

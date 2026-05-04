@@ -1150,5 +1150,339 @@ class ChatbotServiceImplTest {
         // After timeout the future is removed, so cancel returns false — but code path is covered
         assertThat(result).isFalse();
     }
-}
 
+    // ── checkRoleAccess — EMPLOYEE asking about another user is denied ────────
+
+    @Test
+    void chat_employeeRole_askingAboutOtherUser_returnsDenialMessage() {
+        UserProfile otherUser = new UserProfile();
+        try {
+            setField(otherUser, "id", 2L);
+            setField(otherUser, "userName", "jane");
+            setField(otherUser, "fullName", "Jane Smith");
+            setField(otherUser, "active", true);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        when(userProfileRepository.findByUserNameIgnoreCase("jane")).thenReturn(Optional.of(otherUser));
+
+        // EMPLOYEE "john" asking about "jane" — should be denied
+        String response = chatbotService.chat(
+            "What is jane's leave balance?", "john", "EMPLOYEE", null, null, false);
+
+        assertThat(response).containsIgnoringCase("only view your own");
+    }
+
+    // ── checkRoleAccess — EMPLOYEE asking about themselves is allowed ─────────
+
+    @Test
+    void chat_employeeRole_askingAboutSelf_isAllowed() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 5.0}));
+
+        String response = chatbotService.chat(
+            "What is my leave balance?", "john", "EMPLOYEE", null, null, false);
+
+        assertThat(response).contains("Annual Leave");
+    }
+
+    // ── checkRoleAccess — ADMIN role has no restriction ───────────────────────
+
+    @Test
+    void chat_adminRole_canQueryAnyUser() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 8.0}));
+
+        String response = chatbotService.chat(
+            "What is john's leave balance?", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).contains("Annual Leave");
+    }
+
+    // ── answerOnLeaveTodayQuestion — MANAGER sees only their team ─────────────
+
+    @Test
+    void chat_onLeaveTodayIntent_managerRole_seesOnlyTeam() {
+        when(leaveRepository.findTeamOnLeaveByDateAndManager(any(), eq("manager1")))
+            .thenReturn(rowList(new Object[]{"emp1", "Employee One", "APPROVED"}));
+
+        String response = chatbotService.chat(
+            "Who is on leave today?", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).containsIgnoringCase("Employee One");
+        verify(leaveRepository).findTeamOnLeaveByDateAndManager(any(), eq("manager1"));
+        verify(leaveRepository, never()).findPeopleOnLeaveByDate(any());
+    }
+
+    // ── answerOnLeaveTodayIntent — EMPLOYEE sees only themselves ─────────────
+
+    @Test
+    void chat_onLeaveTodayIntent_employeeRole_seesOnlySelf() {
+        when(leaveRepository.findPeopleOnLeaveByDate(any()))
+            .thenReturn(rowList(
+                new Object[]{"john", "John Doe", "APPROVED"},
+                new Object[]{"jane", "Jane Smith", "APPROVED"}
+            ));
+
+        String response = chatbotService.chat(
+            "Who is on leave today?", "john", "EMPLOYEE", null, null, false);
+
+        // EMPLOYEE sees only their own row
+        assertThat(response).containsIgnoringCase("John Doe");
+        assertThat(response).doesNotContain("Jane Smith");
+    }
+
+    // ── answerOnLeaveTodayIntent — EMPLOYEE not on leave today ───────────────
+
+    @Test
+    void chat_onLeaveTodayIntent_employeeRole_notOnLeave_returnsPersonalMessage() {
+        when(leaveRepository.findPeopleOnLeaveByDate(any()))
+            .thenReturn(rowList(new Object[]{"jane", "Jane Smith", "APPROVED"}));
+
+        String response = chatbotService.chat(
+            "Who is on leave today?", "john", "EMPLOYEE", null, null, false);
+
+        assertThat(response).containsIgnoringCase("You are not on leave today");
+    }
+
+    // ── isUserUnderManager — manager can look up their own employee ───────────
+
+    @Test
+    void chat_managerRole_lookupOwnEmployee_isAllowed() {
+        UserProfile emp = new UserProfile();
+        try {
+            setField(emp, "id", 3L);
+            setField(emp, "userName", "emp1");
+            setField(emp, "fullName", "Employee One");
+            setField(emp, "active", true);
+            setField(emp, "createdBy", "manager1");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        when(userProfileRepository.findByUserNameIgnoreCase("emp1")).thenReturn(Optional.of(emp));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(3L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 6.0}));
+
+        String response = chatbotService.chat(
+            "What is emp1's leave balance?", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).contains("Annual Leave");
+    }
+
+    // ── isUserUnderManager — manager cannot look up another manager's employee ─
+
+    @Test
+    void chat_managerRole_lookupOtherManagerEmployee_isDenied() {
+        UserProfile emp = new UserProfile();
+        try {
+            setField(emp, "id", 4L);
+            setField(emp, "userName", "emp2");
+            setField(emp, "fullName", "Employee Two");
+            setField(emp, "active", true);
+            setField(emp, "createdBy", "other_manager");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        when(userProfileRepository.findByUserNameIgnoreCase("emp2")).thenReturn(Optional.of(emp));
+
+        String response = chatbotService.chat(
+            "What is emp2's leave balance?", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).containsIgnoringCase("only view data for employees in your team");
+    }
+
+    // ── buildRelevantTableSql — EMPLOYEE role filters user_profile table ──────
+
+    @Test
+    void chat_ollamaPath_employeeRole_userProfileTableFiltered() throws Exception {
+        java.sql.Connection conn = mock(java.sql.Connection.class);
+        java.sql.DatabaseMetaData meta = mock(java.sql.DatabaseMetaData.class);
+        java.sql.ResultSet schemasRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSet tablesRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSet columnsRs = mock(java.sql.ResultSet.class);
+        java.sql.PreparedStatement stmt = mock(java.sql.PreparedStatement.class);
+        java.sql.ResultSet dataRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSetMetaData rsMeta = mock(java.sql.ResultSetMetaData.class);
+
+        lenient().when(dataSource.getConnection()).thenReturn(conn);
+        lenient().when(conn.getMetaData()).thenReturn(meta);
+        lenient().when(meta.getSchemas()).thenReturn(schemasRs);
+        lenient().when(schemasRs.next()).thenReturn(true, false);
+        lenient().when(schemasRs.getString("TABLE_SCHEM")).thenReturn("user_schema");
+        lenient().when(meta.getTables(null, "user_schema", "%", new String[]{"TABLE"})).thenReturn(tablesRs);
+        lenient().when(tablesRs.next()).thenReturn(true, false);
+        lenient().when(tablesRs.getString("TABLE_NAME")).thenReturn("user_profile");
+        lenient().when(meta.getColumns(null, "user_schema", "user_profile", "%")).thenReturn(columnsRs);
+        lenient().when(columnsRs.next()).thenReturn(true, true, false);
+        lenient().when(columnsRs.getString("COLUMN_NAME")).thenReturn("user_name", "role");
+        lenient().when(conn.prepareStatement(anyString())).thenReturn(stmt);
+        lenient().when(stmt.executeQuery()).thenReturn(dataRs);
+        lenient().when(dataRs.getMetaData())
+
+.thenReturn(rsMeta);
+        lenient().when(rsMeta.getColumnCount()).thenReturn(0);
+        lenient().when(dataRs.next()).thenReturn(false);
+
+        @SuppressWarnings("unchecked")
+        java.util.concurrent.Future<String> future = mock(java.util.concurrent.Future.class);
+        lenient().when(modelExecutor.submit(any(java.util.concurrent.Callable.class))).thenReturn(future);
+        lenient().when(future.get(anyLong(), any())).thenReturn("user profile info");
+
+        // EMPLOYEE role — user_profile table should have WHERE LOWER(user_name) = LOWER(?) filter
+        String response = chatbotService.chat(
+            "show user profile role info", "john", "EMPLOYEE", null, null, false);
+
+        assertThat(response).isNotNull();
+        // Verify the prepared statement was called (role filter was applied)
+        verify(stmt, atLeastOnce()).setString(anyInt(), eq("john"));
+    }
+
+    // ── buildRelevantTableSql — MANAGER role filters leave_application table ──
+
+    @Test
+    void chat_ollamaPath_managerRole_leaveApplicationTableFiltered() throws Exception {
+        java.sql.Connection conn = mock(java.sql.Connection.class);
+        java.sql.DatabaseMetaData meta = mock(java.sql.DatabaseMetaData.class);
+        java.sql.ResultSet schemasRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSet tablesRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSet columnsRs = mock(java.sql.ResultSet.class);
+        java.sql.PreparedStatement stmt = mock(java.sql.PreparedStatement.class);
+        java.sql.ResultSet dataRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSetMetaData rsMeta = mock(java.sql.ResultSetMetaData.class);
+
+        lenient().when(dataSource.getConnection()).thenReturn(conn);
+        lenient().when(conn.getMetaData()).thenReturn(meta);
+        lenient().when(meta.getSchemas()).thenReturn(schemasRs);
+        lenient().when(schemasRs.next()).thenReturn(true, false);
+        lenient().when(schemasRs.getString("TABLE_SCHEM")).thenReturn("leave_schema");
+        lenient().when(meta.getTables(null, "leave_schema", "%", new String[]{"TABLE"})).thenReturn(tablesRs);
+        lenient().when(tablesRs.next()).thenReturn(true, false);
+        lenient().when(tablesRs.getString("TABLE_NAME")).thenReturn("leave_application");
+        lenient().when(meta.getColumns(null, "leave_schema", "leave_application", "%")).thenReturn(columnsRs);
+        lenient().when(columnsRs.next()).thenReturn(true, true, false);
+        lenient().when(columnsRs.getString("COLUMN_NAME")).thenReturn("status", "user_id");
+        lenient().when(conn.prepareStatement(anyString())).thenReturn(stmt);
+        lenient().when(stmt.executeQuery()).thenReturn(dataRs);
+        lenient().when(dataRs.getMetaData()).thenReturn(rsMeta);
+        lenient().when(rsMeta.getColumnCount()).thenReturn(0);
+        lenient().when(dataRs.next()).thenReturn(false);
+
+        @SuppressWarnings("unchecked")
+        java.util.concurrent.Future<String> future = mock(java.util.concurrent.Future.class);
+        lenient().when(modelExecutor.submit(any(java.util.concurrent.Callable.class))).thenReturn(future);
+        lenient().when(future.get(anyLong(), any())).thenReturn("leave application info");
+
+        // MANAGER role — leave_application table should have user_id IN (...) filter
+        String response = chatbotService.chat(
+            "What is the leave application status?", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).isNotNull();
+        // Verify the prepared statement was called with manager username for role filter
+        verify(stmt, atLeastOnce()).setString(anyInt(), eq("manager1"));
+    }
+
+    // ── buildAnswerCacheKey — manager role scopes cache by username ───────────
+
+    @Test
+    void chat_managerRole_cacheKeyIncludesManagerUsername() {
+        when(publicHolidayRepository.findByDateBetween(any(), any())).thenReturn(List.of());
+
+        // First call as manager1
+        chatbotService.chat("What are the upcoming holidays?", "manager1", "MANAGER", null, null, false);
+        // Second call as manager2 — should NOT hit manager1's cache
+        chatbotService.chat("What are the upcoming holidays?", "manager2", "MANAGER", null, null, false);
+
+        // Both calls should hit the repository (different cache keys per manager)
+        verify(publicHolidayRepository, times(2)).findByDateBetween(any(), any());
+    }
+
+    // ── buildAnswerCacheKey — personal query scoped by username ──────────────
+
+    @Test
+    void chat_personalQuery_cacheKeyIncludesUsername() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 5.0}));
+
+        // "my leave balance" is personal — cache key includes username
+        chatbotService.chat("What is my leave balance?", "john");
+        chatbotService.chat("What is my leave balance?", "john");
+
+        // Second call hits cache — repository called only once
+        verify(employeeLeaveRepository, times(1)).findLeaveBalancesByUserId(1L);
+    }
+
+    // ── answerOnLeaveTodayIntent — MANAGER with no team on leave ─────────────
+
+    @Test
+    void chat_onLeaveTodayIntent_managerRole_noTeamOnLeave() {
+        when(leaveRepository.findTeamOnLeaveByDateAndManager(any(), eq("manager1")))
+            .thenReturn(List.of());
+
+        String response = chatbotService.chat(
+            "Who is on leave today?", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).containsIgnoringCase("No one");
+    }
+
+    // ── checkRoleAccess — EMPLOYEE exact username in message matches self ─────
+
+    @Test
+    void chat_employeeRole_exactUsernameInMessage_matchesSelf_isAllowed() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 3.0}));
+
+        // "john" is the current user — exact lookup matches self, allowed
+        String response = chatbotService.chat(
+            "john", "john", "EMPLOYEE", null, null, false);
+
+        // Should return profile info (not a denial)
+        assertThat(response).doesNotContainIgnoringCase("only view your own");
+    }
+
+    // ── buildRelevantTableSql — EMPLOYEE role filters employee_leave table ────
+
+    @Test
+    void chat_ollamaPath_employeeRole_employeeLeaveTableFiltered() throws Exception {
+        java.sql.Connection conn = mock(java.sql.Connection.class);
+        java.sql.DatabaseMetaData meta = mock(java.sql.DatabaseMetaData.class);
+        java.sql.ResultSet schemasRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSet tablesRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSet columnsRs = mock(java.sql.ResultSet.class);
+        java.sql.PreparedStatement stmt = mock(java.sql.PreparedStatement.class);
+        java.sql.ResultSet dataRs = mock(java.sql.ResultSet.class);
+        java.sql.ResultSetMetaData rsMeta = mock(java.sql.ResultSetMetaData.class);
+
+        lenient().when(dataSource.getConnection()).thenReturn(conn);
+        lenient().when(conn.getMetaData()).thenReturn(meta);
+        lenient().when(meta.getSchemas()).thenReturn(schemasRs);
+        lenient().when(schemasRs.next()).thenReturn(true, false);
+        lenient().when(schemasRs.getString("TABLE_SCHEM")).thenReturn("leave_schema");
+        lenient().when(meta.getTables(null, "leave_schema", "%", new String[]{"TABLE"})).thenReturn(tablesRs);
+        lenient().when(tablesRs.next()).thenReturn(true, false);
+        lenient().when(tablesRs.getString("TABLE_NAME")).thenReturn("employee_leave");
+        lenient().when(meta.getColumns(null, "leave_schema", "employee_leave", "%")).thenReturn(columnsRs);
+        lenient().when(columnsRs.next()).thenReturn(true, true, false);
+        lenient().when(columnsRs.getString("COLUMN_NAME")).thenReturn("full_name", "email_id");
+        lenient().when(conn.prepareStatement(anyString())).thenReturn(stmt);
+        lenient().when(stmt.executeQuery()).thenReturn(dataRs);
+        lenient().when(dataRs.getMetaData()).thenReturn(rsMeta);
+        lenient().when(rsMeta.getColumnCount()).thenReturn(0);
+        lenient().when(dataRs.next()).thenReturn(false);
+
+        @SuppressWarnings("unchecked")
+        java.util.concurrent.Future<String> future = mock(java.util.concurrent.Future.class);
+        lenient().when(modelExecutor.submit(any(java.util.concurrent.Callable.class))).thenReturn(future);
+        lenient().when(future.get(anyLong(), any())).thenReturn("employee leave data");
+
+        // EMPLOYEE role — employee_leave table should have user_id = (...) filter
+        String response = chatbotService.chat(
+            "show employee leave gender data", "john", "EMPLOYEE", null, null, false);
+
+        assertThat(response).isNotNull();
+        verify(stmt, atLeastOnce()).setString(anyInt(), eq("john"));
+    }
+}

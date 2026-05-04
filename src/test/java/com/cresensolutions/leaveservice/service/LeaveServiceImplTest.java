@@ -1383,17 +1383,12 @@ class LeaveServiceImplTest {
 
     @Test
     void notifyAdminForFinalApproval_withAdminEmails_sendsNotification() {
-        UserProfile admin = new UserProfile();
-        setField2(admin, "emailId", "admin@cresensolutions.com");
-
         DelegateExecution execution = mock(DelegateExecution.class);
         when(execution.getVariable("leaveId")).thenReturn(10L);
         when(execution.getVariable("actorUsername")).thenReturn("manager1");
         when(execution.getVariable("employeeName")).thenReturn("John Doe");
 
-        when(userProfileRepository.findActiveByRole(LeaveConstants.ROLE_ADMIN)).thenReturn(List.of(admin));
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
-        when(leaveDateRepository.findByApplicationId(10L)).thenReturn(List.of());
 
         leaveService.notifyAdminForFinalApproval(execution);
 

@@ -12,6 +12,7 @@ import com.cresensolutions.leaveservice.dto.UpdateLeaveRequest;
 import com.cresensolutions.leaveservice.dto.UpdateLeaveStatusRequest;
 import com.cresensolutions.leaveservice.service.LeaveService;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,15 +27,12 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+@RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/leaves")
 public class LeaveController {
 
     private final LeaveService leaveService;
-
-    public LeaveController(LeaveService leaveService) {
-        this.leaveService = leaveService;
-    }
 
     @PostMapping
     public LeaveResponse createLeave(@Valid @RequestBody CreateLeaveRequest request) {

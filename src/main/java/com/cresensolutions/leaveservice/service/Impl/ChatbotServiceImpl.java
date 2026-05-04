@@ -139,8 +139,7 @@ public class ChatbotServiceImpl implements ChatbotService {
             new DirectIntent(LeaveConstants.CHATBOT_ON_LEAVE_TODAY_INTENT_PATTERN, (message, username) -> answerOnLeaveTodayQuestion()),
             new DirectIntent(LeaveConstants.CHATBOT_LEAVE_POLICY_INTENT_PATTERN,
                 (message, username) -> answerLeavePolicyQuestion())
-        );
-    }
+        );    }
 
     @EventListener(ApplicationReadyEvent.class)
     public void warmChatbotCaches() {
@@ -156,21 +155,26 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     @Override
     public String chat(String userMessage) {
-        return chat(userMessage, null, null, null, false);
+        return chat(userMessage, null, null, null, null, false);
     }
 
     @Override
     public String chat(String userMessage, String currentUsername) {
-        return chat(userMessage, currentUsername, null, null, false);
+        return chat(userMessage, currentUsername, null, null, null, false);
     }
 
     @Override
     public String chat(String userMessage, String currentUsername, String requestId) {
-        return chat(userMessage, currentUsername, requestId, null, false);
+        return chat(userMessage, currentUsername, null, requestId, null, false);
     }
 
     @Override
     public String chat(String userMessage, String currentUsername, String requestId, String conversationId, boolean newConversation) {
+        return chat(userMessage, currentUsername, null, requestId, conversationId, newConversation);
+    }
+
+    @Override
+    public String chat(String userMessage, String currentUsername, String role, String requestId, String conversationId, boolean newConversation) {
         OffsetDateTime askedAt = OffsetDateTime.now();
         long startMs = System.currentTimeMillis();
         String normalizedRequestId = normalizeUsername(requestId);
@@ -178,7 +182,7 @@ public class ChatbotServiceImpl implements ChatbotService {
             cancelledRequestIds.remove(normalizedRequestId);
         }
 
-        String cacheKey = buildAnswerCacheKey(userMessage, currentUsername);
+        String cacheKey = buildAnswerCacheKey(userMessage, currentUsername, role);
         CachedAnswer cachedAnswer = answerCache.getIfPresent(cacheKey);
         if (cachedAnswer != null) {
             if (log.isDebugEnabled()) {
@@ -197,14 +201,20 @@ public class ChatbotServiceImpl implements ChatbotService {
             return cachedAnswer.answer();
         }
 
+        // Enforce role-based access: deny cross-user queries for EMPLOYEE role
+        String accessDeniedMsg = checkRoleAccess(userMessage, currentUsername, role);
+        if (accessDeniedMsg != null) {
+            return accessDeniedMsg;
+        }
+
         String source = LeaveConstants.CHATBOT_SOURCE_DIRECT_DB;
         String answer;
-        String directAnswer = tryDirectDatabaseAnswer(userMessage, currentUsername);
+        String directAnswer = tryDirectDatabaseAnswer(userMessage, currentUsername, role);
         if (directAnswer != null && !directAnswer.isBlank()) {
             answer = directAnswer;
         } else {
             source = LeaveConstants.CHATBOT_SOURCE_OLLAMA;
-            String dbContext = getQuestionAwareDatabaseContext(userMessage, currentUsername);
+            String dbContext = getQuestionAwareDatabaseContext(userMessage, currentUsername, role);
             Prompt prompt = PromptTemplate.build(dbContext, userMessage);
             try {
                 String response = runModelCall(prompt, userMessage, normalizedRequestId);
@@ -275,7 +285,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         }
     }
 
-    private String buildAnswerCacheKey(String userMessage, String currentUsername) {
+    private String buildAnswerCacheKey(String userMessage, String currentUsername, String role) {
         if (userMessage == null) {
             return "null";
         }
@@ -285,7 +295,12 @@ public class ChatbotServiceImpl implements ChatbotService {
             || (currentUsername != null
                 && normalized.contains(currentUsername.trim().toLowerCase(Locale.ROOT)));
         if (isPersonal && currentUsername != null && !currentUsername.isBlank()) {
-            return currentUsername.trim().toLowerCase(Locale.ROOT) + "::" + normalized;
+            String roleKey = role != null ? role.trim().toLowerCase(Locale.ROOT) : "unknown";
+            return roleKey + "::" + currentUsername.trim().toLowerCase(Locale.ROOT) + "::" + normalized;
+        }
+        // For manager role, scope cache by manager username so different managers don't share results
+        if (LeaveConstants.ROLE_MANAGER.equalsIgnoreCase(role) && currentUsername != null && !currentUsername.isBlank()) {
+            return "manager::" + currentUsername.trim().toLowerCase(Locale.ROOT) + "::" + normalized;
         }
         return normalized;
     }
@@ -343,26 +358,50 @@ public class ChatbotServiceImpl implements ChatbotService {
         return "Sorry, the AI assistant is temporarily unavailable. Please try again in a moment.";
     }
 
-    private String tryDirectDatabaseAnswer(String userMessage, String currentUsername) {
+    private String tryDirectDatabaseAnswer(String userMessage, String currentUsername, String role) {
         if (userMessage == null || userMessage.isBlank()) {
             return null;
         }
 
         String normalizedMessage = userMessage.trim().toLowerCase(Locale.ROOT);
+
+        // Handle "on leave today" separately to pass role context
+        if (LeaveConstants.CHATBOT_ON_LEAVE_TODAY_INTENT_PATTERN.matcher(normalizedMessage).find()) {
+            return answerOnLeaveTodayQuestion(currentUsername, role);
+        }
+
         for (DirectIntent intent : directIntents) {
             if (intent.matches(normalizedMessage)) {
-                return intent.handler().apply(userMessage, currentUsername);
+                // For EMPLOYEE role, always resolve to their own username
+                String resolvedUsername = isEmployee(role)
+                    ? normalizeUsername(currentUsername)
+                    : currentUsername;
+                return intent.handler().apply(userMessage, resolvedUsername);
             }
+        }
+
+        // EMPLOYEE: block lookup of other users
+        if (isEmployee(role)) {
+            return null;
         }
 
         String exactUsernameLookup = resolveExactUsernameQuery(userMessage);
         if (exactUsernameLookup != null) {
+            // MANAGER: only allow lookup of their own employees
+            if (isManager(role) && !isUserUnderManager(exactUsernameLookup, currentUsername)) {
+                return "You can only view data for employees in your team.";
+            }
             return answerUserLookupQuestion(exactUsernameLookup);
         }
 
         Optional<String> usernameFromQuestion = extractUserLookupUsername(userMessage);
         if (usernameFromQuestion.isPresent()) {
-            return answerUserLookupQuestion(usernameFromQuestion.get());
+            String targetUsername = usernameFromQuestion.get();
+            // MANAGER: only allow lookup of their own employees
+            if (isManager(role) && !isUserUnderManager(targetUsername, currentUsername)) {
+                return "You can only view data for employees in your team.";
+            }
+            return answerUserLookupQuestion(targetUsername);
         }
 
         return null;
@@ -488,10 +527,29 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     private String answerOnLeaveTodayQuestion() {
+        return answerOnLeaveTodayQuestion(null, null);
+    }
+
+    private String answerOnLeaveTodayQuestion(String currentUsername, String role) {
         LocalDate today = LocalDate.now();
-        List<Object[]> peopleOnLeave = leaveRepository.findPeopleOnLeaveByDate(today);
+        List<Object[]> peopleOnLeave;
+
+        if (isManager(role) && currentUsername != null && !currentUsername.isBlank()) {
+            // Manager sees only their team on leave today
+            peopleOnLeave = leaveRepository.findTeamOnLeaveByDateAndManager(today, currentUsername);
+        } else if (isEmployee(role)) {
+            // Employee sees only themselves
+            peopleOnLeave = leaveRepository.findPeopleOnLeaveByDate(today).stream()
+                .filter(row -> row != null && row.length > 0 && row[0] != null
+                    && row[0].toString().equalsIgnoreCase(currentUsername))
+                .toList();
+        } else {
+            // Admin sees everyone
+            peopleOnLeave = leaveRepository.findPeopleOnLeaveByDate(today);
+        }
+
         if (peopleOnLeave.isEmpty()) {
-            return "No one is on leave today.";
+            return isEmployee(role) ? "You are not on leave today." : "No one is on leave today.";
         }
 
         List<String> lines = peopleOnLeave.stream()
@@ -623,13 +681,24 @@ public class ChatbotServiceImpl implements ChatbotService {
         return String.format(Locale.ROOT, "%.1f", balance);
     }
 
-    private String getQuestionAwareDatabaseContext(String userMessage, String currentUsername) {
+    private String getQuestionAwareDatabaseContext(String userMessage, String currentUsername, String role) {
         String schemaOverview = getCachedSchemaOverview();
         StringBuilder ctx = new StringBuilder();
         ctx.append("=== LIVE DATABASE CONTEXT (").append(LocalDate.now()).append(") ===\n");
         ctx.append("Question: ").append(userMessage == null ? "" : userMessage.trim()).append("\n");
         if (currentUsername != null && !currentUsername.isBlank()) {
             ctx.append("Current logged-in username: ").append(currentUsername.trim()).append("\n");
+        }
+        if (role != null && !role.isBlank()) {
+            ctx.append("Current user role: ").append(role.trim().toUpperCase(Locale.ROOT)).append("\n");
+        }
+        // Append role-based scope hint for the LLM
+        if (isEmployee(role) && currentUsername != null && !currentUsername.isBlank()) {
+            ctx.append("IMPORTANT: This user is an EMPLOYEE. Only show data for username '")
+               .append(currentUsername.trim()).append("'. Do NOT reveal other users' data.\n");
+        } else if (isManager(role) && currentUsername != null && !currentUsername.isBlank()) {
+            ctx.append("IMPORTANT: This user is a MANAGER. Only show data for employees whose created_by = '")
+               .append(currentUsername.trim()).append("' and for the manager themselves. Do NOT reveal data of employees belonging to other managers.\n");
         }
         ctx.append("\n=== SCHEMA OVERVIEW ===\n").append(schemaOverview).append("\n");
 
@@ -647,7 +716,7 @@ public class ChatbotServiceImpl implements ChatbotService {
                     ctx.append("\n[Context truncated to fit model limits]\n");
                     break;
                 }
-                appendRelevantTableData(conn, table, fullTextQuery, ctx);
+                appendRelevantTableData(conn, table, fullTextQuery, ctx, currentUsername, role);
             }
         } catch (Exception e) {
             log.error("Failed to build question-aware DB context", e);
@@ -802,12 +871,12 @@ public class ChatbotServiceImpl implements ChatbotService {
         return score;
     }
 
-    private void appendRelevantTableData(Connection conn, TableInfo table, String fullTextQuery, StringBuilder ctx) {
-        String sql = buildRelevantTableSql(table, fullTextQuery);
+    private void appendRelevantTableData(Connection conn, TableInfo table, String fullTextQuery, StringBuilder ctx, String currentUsername, String role) {
+        String sql = buildRelevantTableSql(table, fullTextQuery, currentUsername, role);
         ctx.append("\n[").append(table.qualifiedName()).append("]\n");
         ctx.append("Columns: ").append(summarizeColumns(table.columns())).append("\n");
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            bindSearchTerms(stmt, fullTextQuery);
+            bindSearchAndRoleParams(stmt, fullTextQuery, currentUsername, role, table);
             try (ResultSet rs = stmt.executeQuery()) {
                 appendResultSetRows(rs, ctx);
             }
@@ -816,27 +885,97 @@ public class ChatbotServiceImpl implements ChatbotService {
         }
     }
 
-    private String buildRelevantTableSql(TableInfo table, String fullTextQuery) {
-        StringBuilder sql = new StringBuilder("SELECT * FROM ")
-            .append(quoteIdentifier(table.schema()))
-            .append('.')
-            .append(quoteIdentifier(table.table()));
+    private String buildRelevantTableSql(TableInfo table, String fullTextQuery, String currentUsername, String role) {
+        String qualifiedTable = quoteIdentifier(table.schema()) + '.' + quoteIdentifier(table.table());
+        StringBuilder sql = new StringBuilder("SELECT * FROM ").append(qualifiedTable);
 
+        List<String> whereClauses = new ArrayList<>();
+
+        // Role-based row filtering
+        String qualifiedName = table.qualifiedName().toLowerCase(Locale.ROOT);
+        if (isEmployee(role) && currentUsername != null && !currentUsername.isBlank()) {
+            // user_profile: only the employee's own row
+            if ("user_schema.user_profile".equals(qualifiedName)) {
+                whereClauses.add("LOWER(user_name) = LOWER(?)");
+            }
+            // leave_application: only leaves belonging to this user
+            if ("leave_schema.leave_application".equals(qualifiedName)) {
+                whereClauses.add("user_id = (SELECT id FROM user_schema.user_profile WHERE LOWER(user_name) = LOWER(?) LIMIT 1)");
+            }
+            // employee_leave: only this user's balance row
+            if ("leave_schema.employee_leave".equals(qualifiedName)) {
+                whereClauses.add("user_id = (SELECT id FROM user_schema.user_profile WHERE LOWER(user_name) = LOWER(?) LIMIT 1)");
+            }
+        } else if (isManager(role) && currentUsername != null && !currentUsername.isBlank()) {
+            // user_profile: manager's own row + their direct reports
+            if ("user_schema.user_profile".equals(qualifiedName)) {
+                whereClauses.add("(LOWER(user_name) = LOWER(?) OR LOWER(created_by) = LOWER(?))");
+            }
+            // leave_application: only leaves of employees under this manager
+            if ("leave_schema.leave_application".equals(qualifiedName)) {
+                whereClauses.add("user_id IN (SELECT id FROM user_schema.user_profile WHERE LOWER(created_by) = LOWER(?) OR LOWER(user_name) = LOWER(?))");
+            }
+            // employee_leave: only balances of employees under this manager
+            if ("leave_schema.employee_leave".equals(qualifiedName)) {
+                whereClauses.add("user_id IN (SELECT id FROM user_schema.user_profile WHERE LOWER(created_by) = LOWER(?) OR LOWER(user_name) = LOWER(?))");
+            }
+        }
+
+        // Full-text search filter
         List<String> searchableColumns = getSearchableColumns(table);
         if (fullTextQuery != null && !fullTextQuery.isBlank() && !searchableColumns.isEmpty()) {
-            sql.append(" WHERE ")
-                .append(buildSearchableExpression(searchableColumns))
-                .append(" @@ websearch_to_tsquery('")
-                .append(LeaveConstants.CHATBOT_FTS_CONFIG)
-                .append("', ?)")
-                .append(" ORDER BY ts_rank(")
-                .append(buildSearchableExpression(searchableColumns))
-                .append(", websearch_to_tsquery('")
-                .append(LeaveConstants.CHATBOT_FTS_CONFIG)
-                .append("', ?)) DESC");
+            whereClauses.add(buildSearchableExpression(searchableColumns)
+                + " @@ websearch_to_tsquery('" + LeaveConstants.CHATBOT_FTS_CONFIG + "', ?)");
         }
+
+        if (!whereClauses.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", whereClauses));
+        }
+
+        // Add ORDER BY for full-text relevance when applicable
+        if (fullTextQuery != null && !fullTextQuery.isBlank() && !searchableColumns.isEmpty()) {
+            sql.append(" ORDER BY ts_rank(")
+               .append(buildSearchableExpression(searchableColumns))
+               .append(", websearch_to_tsquery('")
+               .append(LeaveConstants.CHATBOT_FTS_CONFIG)
+               .append("', ?)) DESC");
+        }
+
         sql.append(" LIMIT ").append(LeaveConstants.CHATBOT_MAX_ROWS_PER_TABLE);
         return sql.toString();
+    }
+
+    private void bindSearchAndRoleParams(PreparedStatement stmt, String fullTextQuery, String currentUsername, String role, TableInfo table) throws SQLException {
+        int paramIndex = 1;
+        String qualifiedName = table.qualifiedName().toLowerCase(Locale.ROOT);
+        boolean hasRoleFilter = (isEmployee(role) || isManager(role)) && currentUsername != null && !currentUsername.isBlank();
+
+        if (hasRoleFilter) {
+            boolean isUserProfileTable = "user_schema.user_profile".equals(qualifiedName);
+            boolean isLeaveOrBalanceTable = "leave_schema.leave_application".equals(qualifiedName)
+                || "leave_schema.employee_leave".equals(qualifiedName);
+
+            if (isEmployee(role)) {
+                if (isUserProfileTable || isLeaveOrBalanceTable) {
+                    stmt.setString(paramIndex++, currentUsername);
+                }
+            } else if (isManager(role)) {
+                if (isUserProfileTable) {
+                    // (LOWER(user_name) = LOWER(?) OR LOWER(created_by) = LOWER(?))
+                    stmt.setString(paramIndex++, currentUsername);
+                    stmt.setString(paramIndex++, currentUsername);
+                } else if (isLeaveOrBalanceTable) {
+                    // user_id IN (SELECT ... WHERE LOWER(created_by) = LOWER(?) OR LOWER(user_name) = LOWER(?))
+                    stmt.setString(paramIndex++, currentUsername);
+                    stmt.setString(paramIndex++, currentUsername);
+                }
+            }
+        }
+
+        if (fullTextQuery != null && !fullTextQuery.isBlank() && !getSearchableColumns(table).isEmpty()) {
+            stmt.setString(paramIndex++, fullTextQuery);
+            stmt.setString(paramIndex, fullTextQuery); // for ORDER BY ts_rank
+        }
     }
 
     private String buildSearchableExpression(List<String> columns) {
@@ -888,6 +1027,55 @@ public class ChatbotServiceImpl implements ChatbotService {
         }
         stmt.setString(1, fullTextQuery);
         stmt.setString(2, fullTextQuery);
+    }
+
+    // ─── Role helpers ────────────────────────────────────────────────────────
+
+    private boolean isEmployee(String role) {
+        return LeaveConstants.ROLE_EMPLOYEE.equalsIgnoreCase(role);
+    }
+
+    private boolean isManager(String role) {
+        return LeaveConstants.ROLE_MANAGER.equalsIgnoreCase(role);
+    }
+
+    private boolean isAdmin(String role) {
+        return LeaveConstants.ROLE_ADMIN.equalsIgnoreCase(role);
+    }
+
+    /**
+     * Returns a denial message if the request violates role-based access, or null if access is allowed.
+     */
+    private String checkRoleAccess(String userMessage, String currentUsername, String role) {
+        if (userMessage == null || !isEmployee(role) || currentUsername == null || currentUsername.isBlank()) {
+            return null;
+        }
+        // Check if the employee is asking about another user explicitly
+        Optional<String> targetUsername = extractUserLookupUsername(userMessage);
+        if (targetUsername.isPresent() && !targetUsername.get().equalsIgnoreCase(currentUsername)) {
+            return "You can only view your own leave data.";
+        }
+        // Check token-based username references
+        String exactLookup = resolveExactUsernameQuery(userMessage);
+        if (exactLookup != null && !exactLookup.equalsIgnoreCase(currentUsername)) {
+            return "You can only view your own leave data.";
+        }
+        return null;
+    }
+
+    /**
+     * Returns true if the given username is an employee under the given manager.
+     */
+    private boolean isUserUnderManager(String targetUsername, String managerUsername) {
+        if (targetUsername == null || managerUsername == null) {
+            return false;
+        }
+        if (targetUsername.equalsIgnoreCase(managerUsername)) {
+            return true; // manager can always look up themselves
+        }
+        Optional<UserProfile> target = findUserProfile(targetUsername);
+        return target.isPresent()
+            && managerUsername.equalsIgnoreCase(target.get().getCreatedBy());
     }
 
     private void appendResultSetRows(ResultSet rs, StringBuilder ctx) throws SQLException {

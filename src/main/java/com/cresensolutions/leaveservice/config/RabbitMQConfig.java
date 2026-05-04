@@ -1,39 +1,15 @@
 package com.cresensolutions.leaveservice.config;
 
 import org.springframework.amqp.core.*;
-import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
-import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * Declares all exchanges, queues, and bindings for the Leave Service.
- *
- * Exchange layout:
- *   leave.events  (topic)  — all leave lifecycle events
- *   leave.dlx     (direct) — dead-letter exchange for failed messages
- *
- * Routing keys:
- *   leave.submitted              → q.leave.submitted
- *   leave.manager.approved       → q.leave.manager.approved
- *   leave.approved               → q.leave.approved
- *   leave.rejected               → q.leave.rejected
- *   leave.partial.decision       → q.leave.partial.decision
- *   leave.cancelled              → q.leave.cancelled
- *   leave.reminder               → q.leave.reminder
- *   leave.admin.notify           → q.leave.admin.notify
- *   leave.balance.deduct         → q.leave.balance.deduct
- */
 @Configuration
 public class RabbitMQConfig {
 
-    // ── Exchange names ────────────────────────────────────────────────────────
     public static final String LEAVE_EVENTS_EXCHANGE     = "leave.events";
     public static final String LEAVE_DLX                 = "leave.dlx";
 
-    // ── Routing keys ──────────────────────────────────────────────────────────
     public static final String RK_LEAVE_SUBMITTED        = "leave.submitted";
     public static final String RK_LEAVE_MANAGER_APPROVED = "leave.manager.approved";
     public static final String RK_LEAVE_APPROVED         = "leave.approved";
@@ -44,7 +20,6 @@ public class RabbitMQConfig {
     public static final String RK_LEAVE_ADMIN_NOTIFY     = "leave.admin.notify";
     public static final String RK_LEAVE_BALANCE_DEDUCT   = "leave.balance.deduct";
 
-    // ── Queue names ───────────────────────────────────────────────────────────
     public static final String Q_LEAVE_SUBMITTED         = "q.leave.submitted";
     public static final String Q_LEAVE_MANAGER_APPROVED  = "q.leave.manager.approved";
     public static final String Q_LEAVE_APPROVED          = "q.leave.approved";
@@ -55,10 +30,8 @@ public class RabbitMQConfig {
     public static final String Q_LEAVE_ADMIN_NOTIFY      = "q.leave.admin.notify";
     public static final String Q_LEAVE_BALANCE_DEDUCT    = "q.leave.balance.deduct";
 
-    // ── Dead-letter queue names ───────────────────────────────────────────────
     public static final String Q_LEAVE_BALANCE_DEDUCT_DLQ = "q.leave.balance.deduct.dlq";
 
-    // ── Exchanges ─────────────────────────────────────────────────────────────
 
     @Bean TopicExchange leaveEventsExchange() {
         return ExchangeBuilder.topicExchange(LEAVE_EVENTS_EXCHANGE).durable(true).build();
@@ -68,7 +41,6 @@ public class RabbitMQConfig {
         return ExchangeBuilder.directExchange(LEAVE_DLX).durable(true).build();
     }
 
-    // ── Dead-letter queues ────────────────────────────────────────────────────
 
     @Bean Queue leaveBalanceDeductDlq() {
         return QueueBuilder.durable(Q_LEAVE_BALANCE_DEDUCT_DLQ).build();
@@ -77,8 +49,6 @@ public class RabbitMQConfig {
     @Bean Binding leaveBalanceDeductDlqBinding() {
         return BindingBuilder.bind(leaveBalanceDeductDlq()).to(leaveDlx()).with(Q_LEAVE_BALANCE_DEDUCT);
     }
-
-    // ── Main queues ───────────────────────────────────────────────────────────
 
     @Bean Queue qLeaveSubmitted()        { return durable(Q_LEAVE_SUBMITTED); }
     @Bean Queue qLeaveManagerApproved()  { return durable(Q_LEAVE_MANAGER_APPROVED); }
@@ -96,7 +66,6 @@ public class RabbitMQConfig {
                 .build();
     }
 
-    // ── Bindings ──────────────────────────────────────────────────────────────
 
     @Bean Binding bindLeaveSubmitted()       { return bind(qLeaveSubmitted(),       RK_LEAVE_SUBMITTED); }
     @Bean Binding bindLeaveManagerApproved() { return bind(qLeaveManagerApproved(), RK_LEAVE_MANAGER_APPROVED); }
@@ -108,7 +77,6 @@ public class RabbitMQConfig {
     @Bean Binding bindLeaveAdminNotify()     { return bind(qLeaveAdminNotify(),     RK_LEAVE_ADMIN_NOTIFY); }
     @Bean Binding bindLeaveBalanceDeduct()   { return bind(qLeaveBalanceDeduct(),   RK_LEAVE_BALANCE_DEDUCT); }
 
-    // ── Cross-service queues (consumed by Leave Service from user.events) ─────
 
     public static final String USER_EVENTS_EXCHANGE      = "user.events";
     public static final String RK_USER_DELETED           = "user.deleted";
@@ -132,30 +100,6 @@ public class RabbitMQConfig {
         return BindingBuilder.bind(qAttendanceCheckinLeave()).to(userEventsExchange()).with(RK_ATTENDANCE_CHECKIN);
     }
 
-    // ── Serialization + template ──────────────────────────────────────────────
-
-    @Bean
-    public Jackson2JsonMessageConverter jsonMessageConverter() {
-        return new Jackson2JsonMessageConverter();
-    }
-
-    @Bean
-    public RabbitTemplate rabbitTemplate(ConnectionFactory cf) {
-        RabbitTemplate tpl = new RabbitTemplate(cf);
-        tpl.setMessageConverter(jsonMessageConverter());
-        return tpl;
-    }
-
-    @Bean
-    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
-            ConnectionFactory cf) {
-        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
-        factory.setConnectionFactory(cf);
-        factory.setMessageConverter(jsonMessageConverter());
-        return factory;
-    }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private Queue durable(String name) {
         return QueueBuilder.durable(name).build();

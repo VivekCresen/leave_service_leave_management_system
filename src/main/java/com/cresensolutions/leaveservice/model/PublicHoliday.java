@@ -11,10 +11,13 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
+import lombok.Getter;
+
 import java.time.Instant;
 import java.time.LocalDate;
 
 
+@Getter
 @Entity
 @Table(
         schema = DbSchemas.LEAVE,
@@ -67,14 +70,6 @@ public class PublicHoliday {
     void onUpdate() {
         updatedAt = Instant.now();
     }
-
-    public Long getId() { return id; }
-    public String getName() { return name; }
-    public LocalDate getDate() { return date; }
-    public String getDescription() { return description; }
-    public String getCreatedBy() { return createdBy; }
-    public Instant getCreatedAt() { return createdAt; }
-    public Instant getUpdatedAt() { return updatedAt; }
 
     public void update(String name, LocalDate date, String description) {
         this.name = name;

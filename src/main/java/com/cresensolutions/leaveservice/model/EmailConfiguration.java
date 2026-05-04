@@ -9,9 +9,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import lombok.Getter;
 
 import java.time.Instant;
 
+@Getter
 @Entity
 @Table(schema = DbSchemas.EMAIL, name = "email_configuration")
 public class EmailConfiguration {
@@ -62,72 +64,17 @@ public class EmailConfiguration {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    protected EmailConfiguration() {
-    }
+    protected EmailConfiguration() {}
 
     @PrePersist
     void onCreate() {
         Instant now = Instant.now();
-        if (createdAt == null) {
-            createdAt = now;
-        }
+        if (createdAt == null) createdAt = now;
         updatedAt = now;
     }
 
     @PreUpdate
     void onUpdate() {
         updatedAt = Instant.now();
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public String getHost() {
-        return host;
-    }
-
-    public Integer getPort() {
-        return port;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public String getProtocol() {
-        return protocol;
-    }
-
-    public boolean isAuth() {
-        return auth;
-    }
-
-    public boolean isStarttlsEnabled() {
-        return starttlsEnabled;
-    }
-
-    public boolean isSslEnabled() {
-        return sslEnabled;
-    }
-
-    public String getFromAddress() {
-        return fromAddress;
-    }
-
-    public String getLogoPath() {
-        return logoPath;
-    }
-
-    public Integer getBatchSize() {
-        return batchSize;
-    }
-
-    public boolean isActive() {
-        return active;
     }
 }

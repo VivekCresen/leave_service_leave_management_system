@@ -9,9 +9,11 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
+@Getter
 @Entity
 @Table(schema = DbSchemas.LEAVE, name = "employee_leave")
 public class EmployeeLeave {
@@ -37,30 +39,5 @@ public class EmployeeLeave {
     @Column(name = "gender")
     private String gender;
 
-    protected EmployeeLeave() {
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public UserProfile getUser() {
-        return user;
-    }
-
-    public String getFullName() {
-        return fullName;
-    }
-
-    public String getEmailId() {
-        return emailId;
-    }
-
-    public String getLeaves() {
-        return leaves;
-    }
-
-    public String getGender() {
-        return gender;
-    }
+    protected EmployeeLeave() {}
 }

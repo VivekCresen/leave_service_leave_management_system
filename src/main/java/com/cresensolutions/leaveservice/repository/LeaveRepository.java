@@ -116,6 +116,18 @@ public interface LeaveRepository extends JpaRepository<LeaveRecord, Long> {
             """, nativeQuery = true)
     List<Object[]> findPeopleOnLeaveByDate(@Param("date") LocalDate date);
 
+    @Query(value = """
+            SELECT u.user_name, u.full_name, UPPER(COALESCE(l.status, 'PENDING'))
+            FROM leave_schema.leave_dates ld
+            INNER JOIN leave_schema.leave_application l ON ld.leave_application_id = l.id
+            INNER JOIN user_schema.user_profile u ON l.user_id = u.id
+            WHERE ld.leave_date = :date
+              AND UPPER(COALESCE(l.status, 'PENDING')) IN ('APPROVED', 'PENDING')
+              AND (LOWER(u.created_by) = LOWER(:managerUsername) OR LOWER(u.user_name) = LOWER(:managerUsername))
+            ORDER BY COALESCE(NULLIF(u.full_name, ''), u.user_name) ASC, u.user_name ASC
+            """, nativeQuery = true)
+    List<Object[]> findTeamOnLeaveByDateAndManager(@Param("date") LocalDate date, @Param("managerUsername") String managerUsername);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "UPDATE leave_schema.leave_application SET leave_type_id = NULL WHERE leave_type_id = :leaveTypeId",
            nativeQuery = true)

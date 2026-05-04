@@ -42,6 +42,7 @@ public final class LeaveConstants {
     public static final String CHATBOT_SCHEMA_OVERVIEW_CACHE_KEY = "schema_overview";
     public static final String CHATBOT_REQUEST_MESSAGE_KEY = "message";
     public static final String CHATBOT_REQUEST_USERNAME_KEY = "username";
+    public static final String CHATBOT_REQUEST_ROLE_KEY = "role";
     public static final String CHATBOT_REQUEST_ID_KEY = "requestId";
     public static final String CHATBOT_CONVERSATION_ID_KEY = "conversationId";
     public static final String CHATBOT_NEW_CONVERSATION_KEY = "newConversation";

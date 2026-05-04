@@ -20,6 +20,7 @@ public class ChatbotController {
     public ResponseEntity<Map<String, String>> chat(@RequestBody Map<String, Object> request) {
         String userMessage    = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_MESSAGE_KEY);
         String username       = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_USERNAME_KEY);
+        String role           = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_ROLE_KEY);
         String requestId      = StringUtils.extractString(request, LeaveConstants.CHATBOT_REQUEST_ID_KEY);
         String conversationId = StringUtils.extractString(request, LeaveConstants.CHATBOT_CONVERSATION_ID_KEY);
         boolean newConversation = Boolean.parseBoolean(String.valueOf(
@@ -33,7 +34,7 @@ public class ChatbotController {
             ));
         }
 
-        String response = chatbotService.chat(userMessage, username, requestId, conversationId, newConversation);
+        String response = chatbotService.chat(userMessage, username, role, requestId, conversationId, newConversation);
         return ResponseEntity.ok(Map.of(LeaveConstants.CHATBOT_RESPONSE_KEY, response));
     }
 

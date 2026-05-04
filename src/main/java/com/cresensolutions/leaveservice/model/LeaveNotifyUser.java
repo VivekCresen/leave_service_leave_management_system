@@ -12,8 +12,9 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import lombok.Getter;
 
-
+@Getter
 @Entity
 @Table(
         schema = DbSchemas.LEAVE,
@@ -48,15 +49,7 @@ public class LeaveNotifyUser {
         this.user = user;
     }
 
-    public Long getId() { return id; }
-
-    public LeaveRecord getLeave() { return leave; }
-
-    public UserProfile getUser() { return user; }
-
     public Long getUserId() { return user == null ? null : user.getId(); }
-
     public String getUserEmail() { return user == null ? null : user.getEmailId(); }
-
     public String getUserFullName() { return user == null ? null : user.getFullName(); }
 }

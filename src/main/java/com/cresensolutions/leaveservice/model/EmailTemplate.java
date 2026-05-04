@@ -9,10 +9,12 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.time.Instant;
 
-
+@Getter
 @Entity
 @Table(schema = DbSchemas.EMAIL, name = "email_template")
 public class EmailTemplate {
@@ -24,12 +26,15 @@ public class EmailTemplate {
     @Column(name = "template_type", nullable = false, unique = true, length = 50)
     private String templateType;
 
+    @Setter
     @Column(name = "subject", nullable = false, length = 500)
     private String subject;
 
+    @Setter
     @Column(name = "body_html", nullable = false, columnDefinition = "TEXT")
     private String bodyHtml;
 
+    @Setter
     @Column(name = "active", nullable = false)
     private boolean active = true;
 
@@ -52,16 +57,4 @@ public class EmailTemplate {
     void onUpdate() {
         updatedAt = Instant.now();
     }
-
-    public Long getId() { return id; }
-    public String getTemplateType() { return templateType; }
-    public String getSubject() { return subject; }
-    public String getBodyHtml() { return bodyHtml; }
-    public boolean isActive() { return active; }
-    public Instant getCreatedAt() { return createdAt; }
-    public Instant getUpdatedAt() { return updatedAt; }
-
-    public void setSubject(String subject) { this.subject = subject; }
-    public void setBodyHtml(String bodyHtml) { this.bodyHtml = bodyHtml; }
-    public void setActive(boolean active) { this.active = active; }
 }

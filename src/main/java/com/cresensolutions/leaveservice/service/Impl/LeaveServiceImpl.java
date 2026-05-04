@@ -165,7 +165,6 @@ public class LeaveServiceImpl implements LeaveService {
 
         startApprovalProcess(saved, user, request);
 
-        // Notify manager via queue — decoupled from the request thread
         List<String> dateStrings = dates.stream()
                 .map(d -> d.getLeaveDate().toString()).toList();
         String managerUsername = user.getCreatedBy() != null ? user.getCreatedBy() : "";

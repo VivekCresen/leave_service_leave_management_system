@@ -17,6 +17,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+@Getter
 @Entity
 @Table(
         schema = DbSchemas.LEAVE,
@@ -150,7 +152,6 @@ public class LeaveRecord {
             try {
                 return leaveTypeReference.getDisplayName();
             } catch (Exception e) {
-                // leaveTypeReference proxy could not be loaded (e.g. deleted leave type)
                 return leaveType;
             }
         }
@@ -177,27 +178,6 @@ public class LeaveRecord {
             return null;
         }
     }
-
-    public String getEmailId() { return emailId; }
-    public String getReason() { return reason; }
-    public String getTrail() { return trail; }
-    public OffsetDateTime getCreatedAt() { return createdAt; }
-    public OffsetDateTime getUpdatedAt() { return updatedAt; }
-    public String getComments() { return comments; }
-    public boolean isEditable() { return editable; }
-    public String getStatus() { return status; }
-    public String getApprovedBy() { return approvedBy; }
-    public String getManagerApprovedBy() { return managerApprovedBy; }
-    public String getManagerRejectedBy() { return managerRejectedBy; }
-    public OffsetDateTime getManagerApprovedAt() { return managerApprovedAt; }
-    public OffsetDateTime getManagerRejectedAt() { return managerRejectedAt; }
-    public String getAdminApprovedBy() { return adminApprovedBy; }
-    public String getAdminRejectedBy() { return adminRejectedBy; }
-    public OffsetDateTime getAdminApprovedAt() { return adminApprovedAt; }
-    public OffsetDateTime getAdminRejectedAt() { return adminRejectedAt; }
-    public String getRejectionReason() { return rejectionReason; }
-    public String getReminderSentFlags() { return reminderSentFlags; }
-    public UserProfile getUser() { return user; }
 
     public boolean isReminderSent(int daysBefore) {
         if (reminderSentFlags == null || reminderSentFlags.isBlank()) return false;

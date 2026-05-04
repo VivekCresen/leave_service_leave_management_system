@@ -9,11 +9,14 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 
+import lombok.Getter;
+
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+@Getter
 @Entity
 @Table(schema = DbSchemas.USER, name = "user_profile")
 public class UserProfile {
@@ -72,68 +75,8 @@ public class UserProfile {
     public UserProfile() {
     }
 
-    public Long getId() {
-        return id;
-    }
-
-    public String getCompanyId() {
-        return companyId;
-    }
-
-    public String getUserName() {
-        return userName;
-    }
-
-    public String getFullName() {
-        return fullName;
-    }
-
-    public String getEmailId() {
-        return emailId;
-    }
-
-    public String getUserPswd() {
-        return userPswd;
-    }
-
-    public String getRole() {
-        return role;
-    }
-
-    public Long getRoleId() {
-        return roleId;
-    }
-
-    public String getGender() {
-        return gender;
-    }
-
-    public boolean isActive() {
-        return active;
-    }
-
     public void deactivate() {
         this.active = false;
-    }
-
-    public Instant getCreateDate() {
-        return createDate;
-    }
-
-    public Instant getUpdateDate() {
-        return updateDate;
-    }
-
-    public String getCreatedBy() {
-        return createdBy;
-    }
-
-    public String getUpdatedBy() {
-        return updatedBy;
-    }
-
-    public Instant getLastLogin() {
-        return lastLogin;
     }
 
     public Set<LeaveRecord> getLeaveRecords() {

@@ -12,11 +12,13 @@ import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import lombok.Getter;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 
+@Getter
 @Entity
 @Table(schema = DbSchemas.USER, name = "chat_history")
 public class ChatHistory {
@@ -70,17 +72,6 @@ public class ChatHistory {
     void onUpdate() {
         updatedAt = OffsetDateTime.now();
     }
-
-
-    public Long getId()              { return id; }
-    public UserProfile getUser()     { return user; }
-    public String getUserName()      { return userName; }
-    public String getEmailId()       { return emailId; }
-    public int getTotalSessions()    { return totalSessions; }
-    public int getTotalQaPairs()     { return totalQaPairs; }
-    public String getConversations() { return conversations; }
-    public OffsetDateTime getCreatedAt() { return createdAt; }
-    public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
     public void setConversations(String conversations) {
         this.conversations = conversations;

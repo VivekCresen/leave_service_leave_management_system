@@ -13,11 +13,14 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
+import lombok.Getter;
+
 import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+@Getter
 @Entity
 @Table(
         schema = DbSchemas.LEAVE,
@@ -97,34 +100,6 @@ public class LeaveType {
 
     public Integer getId() {
         return id;
-    }
-
-    public String getLeaveName() {
-        return leaveName;
-    }
-
-    public String getLeaveUniqueName() {
-        return leaveUniqueName;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public Integer getMaxDays() {
-        return maxDays;
-    }
-
-    public String getGenderRestriction() {
-        return genderRestriction;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
     }
 
     public String getDisplayName() {

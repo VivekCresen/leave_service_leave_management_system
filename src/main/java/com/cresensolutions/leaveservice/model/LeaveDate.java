@@ -14,9 +14,11 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import lombok.Getter;
 
 import java.time.LocalDate;
 
+@Getter
 @Entity
 @Table(
         schema = DbSchemas.LEAVE,
@@ -52,9 +54,4 @@ public class LeaveDate {
         this.leaveDate = leaveDate;
         this.dayType = dayType != null ? dayType.toUpperCase() : LeaveConstants.DAY_TYPE_FULL;
     }
-
-    public Long getId() { return id; }
-    public LeaveRecord getLeaveApplication() { return leaveApplication; }
-    public LocalDate getLeaveDate() { return leaveDate; }
-    public String getDayType() { return dayType; }
 }

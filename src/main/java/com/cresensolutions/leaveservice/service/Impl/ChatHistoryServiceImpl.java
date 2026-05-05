@@ -54,13 +54,17 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         String targetConversationId = resolveConversationId(user, conversationId, newConversation, conversations);
         boolean createdNewConversation = !conversations.has(targetConversationId);
 
-        ArrayNode conversationEntries = conversations.withArray(targetConversationId);
-        int nextQuestionId = conversationEntries.size() + 1;
-        String chatTitle = conversationEntries.size() > 0
-            ? conversationEntries.get(0).path("chatTitle").asText(buildChatTitle(qaPair.question()))
-            : buildChatTitle(qaPair.question());
+        ObjectNode conversation = getOrCreateConversation(conversations, targetConversationId, userProfile, qaPair);
+        ArrayNode messages = conversation.withArray("messages");
+        int nextQuestionId = messages.size() + 1;
 
-        conversationEntries.add(buildConversationEntry(targetConversationId, nextQuestionId, chatTitle, userProfile, qaPair));
+        if (createdNewConversation) {
+            ObjectNode meta = conversation.with("meta");
+            meta.put("chatTitle", buildChatTitle(qaPair.question()));
+            meta.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        }
+
+        messages.add(buildMessageEntry(nextQuestionId, qaPair));
 
         try {
             history.setConversations(objectMapper.writeValueAsString(conversations));
@@ -78,40 +82,101 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         log.debug("ChatHistory: saved Q&A to conversation '{}' for user '{}'", targetConversationId, user);
     }
 
-    private ObjectNode buildConversationEntry(
-        String conversationId,
-        int questionId,
-        String chatTitle,
-        UserProfile userProfile,
-        QaPair qaPair
-    ) {
-        ObjectNode entry = objectMapper.createObjectNode();
-        ArrayNode answerArray = objectMapper.createArrayNode();
-        ObjectNode answerNode = objectMapper.createObjectNode();
-        answerNode.put("Text", qaPair.answer());
-        answerNode.putNull("Table");
-        answerArray.add(answerNode);
-
-        entry.set("answer", answerArray);
-        entry.put("profile", "localhost");
-        if (userProfile.getId() != null) {
-            entry.put("user_id", userProfile.getId());
-        } else {
-            entry.putNull("user_id");
+    private ObjectNode getOrCreateConversation(ObjectNode conversations, String conversationId, UserProfile userProfile, QaPair qaPair) {
+        if (conversations.has(conversationId)) {
+            JsonNode existing = conversations.get(conversationId);
+            if (existing.isObject()) {
+                return (ObjectNode) existing;
+            }
+            // Migrate old array format to new { meta, messages } format
+            if (existing.isArray()) {
+                return migrateConversationToNewFormat((ArrayNode) existing, conversationId, userProfile);
+            }
         }
-        entry.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
-        entry.put("question", qaPair.question());
-        entry.put("chatTitle", chatTitle);
-        entry.put("request_id", "req_" + System.currentTimeMillis() + "_" + questionId);
-        entry.put("question_id", questionId);
-        entry.put("response_type", "text");
-        entry.put("conversation_id", conversationId);
-        entry.put("request_timestamp", qaPair.askedAt().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-        entry.put("response_timestamp", qaPair.answeredAt().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-        entry.put("username", userProfile.getUserName());
-        entry.put("source", qaPair.source());
-        entry.put("latency_ms", qaPair.latencyMs());
-        return entry;
+
+        // Create new conversation with meta + messages structure
+        ObjectNode conversation = objectMapper.createObjectNode();
+        ObjectNode meta = conversation.putObject("meta");
+        meta.put("conversation_id", conversationId);
+        meta.put("username", userProfile.getUserName());
+        if (userProfile.getId() != null) {
+            meta.put("user_id", userProfile.getId());
+        } else {
+            meta.putNull("user_id");
+        }
+        meta.put("profile", "localhost");
+        meta.put("response_type", "text");
+        meta.put("chatTitle", buildChatTitle(qaPair.question()));
+        meta.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        conversation.putArray("messages");
+        conversations.set(conversationId, conversation);
+        return conversation;
+    }
+
+    private ObjectNode migrateConversationToNewFormat(ArrayNode oldMessages, String conversationId, UserProfile userProfile) {
+        ObjectNode conversation = objectMapper.createObjectNode();
+        ObjectNode meta = conversation.putObject("meta");
+        ArrayNode messages = conversation.putArray("messages");
+
+        // Extract meta from first message if available
+        if (oldMessages.size() > 0) {
+            JsonNode first = oldMessages.get(0);
+            meta.put("chatTitle", first.path("chatTitle").asText(LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE));
+            meta.put("chatDate", first.path("chatDate").asText(""));
+            meta.put("username", first.path("username").asText(userProfile.getUserName()));
+            meta.put("user_id", first.path("user_id").asLong(userProfile.getId()));
+            meta.put("profile", first.path("profile").asText("localhost"));
+        } else {
+            meta.put("chatTitle", LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE);
+            meta.put("chatDate", "");
+            meta.put("username", userProfile.getUserName());
+            meta.put("user_id", userProfile.getId());
+            meta.put("profile", "localhost");
+        }
+        meta.put("conversation_id", conversationId);
+        meta.put("response_type", "text");
+
+        // Migrate messages, stripping redundant fields
+        for (JsonNode oldMsg : oldMessages) {
+            ObjectNode newMsg = objectMapper.createObjectNode();
+            newMsg.put("question", oldMsg.path("question").asText(""));
+            newMsg.put("answer", oldMsg.path("answer").asText(""));
+            if (oldMsg.has("table")) {
+                newMsg.set("table", oldMsg.get("table"));
+            } else {
+                newMsg.putNull("table");
+            }
+            newMsg.put("source", oldMsg.path("source").asText(""));
+            newMsg.put("question_id", oldMsg.path("question_id").asInt(0));
+            newMsg.put("request_id", oldMsg.path("request_id").asText(""));
+            newMsg.put("latency_ms", oldMsg.path("latency_ms").asLong(0));
+            newMsg.put("request_timestamp", oldMsg.path("request_timestamp").asText(""));
+            newMsg.put("response_timestamp", oldMsg.path("response_timestamp").asText(""));
+            messages.add(newMsg);
+        }
+
+        return conversation;
+    }
+
+    private ObjectNode buildMessageEntry(int questionId, QaPair qaPair) {
+        ObjectNode message = objectMapper.createObjectNode();
+        message.put("question", qaPair.question());
+
+        ParsedAnswer parsed = parseAnswerForTable(qaPair.answer());
+        message.put("answer", parsed.text());
+        if (parsed.table() != null) {
+            message.set("table", parsed.table());
+        } else {
+            message.putNull("table");
+        }
+
+        message.put("source", qaPair.source());
+        message.put("question_id", questionId);
+        message.put("request_id", "req_" + System.currentTimeMillis() + "_" + questionId);
+        message.put("latency_ms", qaPair.latencyMs());
+        message.put("request_timestamp", qaPair.askedAt().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        message.put("response_timestamp", qaPair.answeredAt().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        return message;
     }
 
     private ObjectNode readConversationRoot(String rawConversations, UserProfile userProfile) {
@@ -143,9 +208,19 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
 
         for (JsonNode sessionNode : sessions) {
             String conversationId = formatConversationId(conversationIndex++);
-            ArrayNode entries = objectMapper.createArrayNode();
             String title = sessionNode.path("title").asText(LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE);
             JsonNode qaPairs = sessionNode.path("qa_pairs");
+
+            ObjectNode conversation = objectMapper.createObjectNode();
+            ObjectNode meta = conversation.putObject("meta");
+            meta.put("conversation_id", conversationId);
+            meta.put("chatTitle", title);
+            meta.put("chatDate", "");
+            meta.put("username", userProfile.getUserName());
+            meta.put("user_id", userProfile.getId());
+            meta.put("profile", "localhost");
+            meta.put("response_type", "text");
+            ArrayNode messages = conversation.putArray("messages");
 
             if (qaPairs.isArray()) {
                 int questionIndex = 1;
@@ -158,22 +233,15 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
                         parseOffsetDateTime(qaNode.path("asked_at").asText(null)),
                         parseOffsetDateTime(qaNode.path("answered_at").asText(null))
                     );
-
-                    ObjectNode entry = buildConversationEntry(
-                        conversationId,
-                        questionIndex++,
-                        title,
-                        userProfile,
-                        migratedQaPair
-                    );
+                    ObjectNode msg = buildMessageEntry(questionIndex++, migratedQaPair);
                     if (qaNode.hasNonNull("qa_id")) {
-                        entry.put("request_id", qaNode.path("qa_id").asText());
+                        msg.put("request_id", qaNode.path("qa_id").asText());
                     }
-                    entries.add(entry);
+                    messages.add(msg);
                 }
             }
 
-            migrated.set(conversationId, entries);
+            migrated.set(conversationId, conversation);
         }
 
         return migrated;
@@ -185,31 +253,29 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         boolean newConversation,
         ObjectNode conversations
     ) {
+        // Always trust the conversationId sent by the frontend if it's valid
         String normalizedRequestedId = normalizeConversationId(requestedConversationId);
-        if (normalizedRequestedId != null) {
-          if (!conversations.has(normalizedRequestedId)) {
-              return normalizedRequestedId;
-          }
-          if (!newConversation) {
-              ActiveSessionMeta meta = activeSessionMeta.get(username);
-              if (meta != null) {
-                  meta.touch();
-              }
-              return normalizedRequestedId;
-          }
+        if (normalizedRequestedId != null && !newConversation) {
+            ActiveSessionMeta meta = activeSessionMeta.get(username);
+            if (meta != null) meta.touch();
+            return normalizedRequestedId;
         }
 
+        // newConversation=true: create the next available id
+        if (newConversation) {
+            return nextConversationId(conversations);
+        }
+
+        // No conversationId from frontend — reuse active session or latest
         ActiveSessionMeta meta = activeSessionMeta.get(username);
-        if (!newConversation && meta != null && !meta.isExpired() && conversations.has(meta.sessionId)) {
+        if (meta != null && !meta.isExpired() && conversations.has(meta.sessionId)) {
             meta.touch();
             return meta.sessionId;
         }
 
-        if (!newConversation) {
-            String latestConversationId = findLatestConversationId(conversations);
-            if (latestConversationId != null) {
-                return latestConversationId;
-            }
+        String latestConversationId = findLatestConversationId(conversations);
+        if (latestConversationId != null) {
+            return latestConversationId;
         }
 
         return nextConversationId(conversations);
@@ -282,6 +348,78 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         } catch (Exception e) {
             return OffsetDateTime.now();
         }
+    }
+
+    private record ParsedAnswer(String text, JsonNode table) {}
+
+    /**
+     * If the answer contains a markdown table, extracts it into a structured JSON object:
+     * { "headers": [...], "rows": [[...], [...]] }
+     * The plain text portion (title line before the table) is kept in Text.
+     */
+    private ParsedAnswer parseAnswerForTable(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return new ParsedAnswer(answer, null);
+        }
+
+        String[] lines = answer.split("\n");
+        int headerLineIdx = -1;
+        int separatorLineIdx = -1;
+
+        for (int i = 0; i < lines.length - 1; i++) {
+            String line = lines[i].trim();
+            String next = lines[i + 1].trim();
+            if (line.startsWith("|") && line.endsWith("|")
+                    && next.matches("\\|[-| :]+\\|")) {
+                headerLineIdx = i;
+                separatorLineIdx = i + 1;
+                break;
+            }
+        }
+
+        if (headerLineIdx == -1) {
+            return new ParsedAnswer(answer, null);
+        }
+
+        // Extract text before the table
+        StringBuilder textBefore = new StringBuilder();
+        for (int i = 0; i < headerLineIdx; i++) {
+            if (i > 0) textBefore.append("\n");
+            textBefore.append(lines[i]);
+        }
+
+        // Parse headers
+        String[] headers = splitTableRow(lines[headerLineIdx]);
+
+        // Parse data rows (everything after the separator line)
+        ArrayNode rowsNode = objectMapper.createArrayNode();
+        for (int i = separatorLineIdx + 1; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (line.isBlank() || !line.startsWith("|")) break;
+            String[] cells = splitTableRow(line);
+            ArrayNode rowNode = objectMapper.createArrayNode();
+            for (String cell : cells) rowNode.add(cell);
+            rowsNode.add(rowNode);
+        }
+
+        ArrayNode headersNode = objectMapper.createArrayNode();
+        for (String h : headers) headersNode.add(h);
+
+        ObjectNode tableNode = objectMapper.createObjectNode();
+        tableNode.set("headers", headersNode);
+        tableNode.set("rows", rowsNode);
+
+        return new ParsedAnswer(textBefore.toString().trim(), tableNode);
+    }
+
+    private String[] splitTableRow(String line) {
+        // Remove leading/trailing pipes then split
+        String trimmed = line.trim();
+        if (trimmed.startsWith("|")) trimmed = trimmed.substring(1);
+        if (trimmed.endsWith("|")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+        String[] parts = trimmed.split("\\|");
+        for (int i = 0; i < parts.length; i++) parts[i] = parts[i].trim();
+        return parts;
     }
 
     private static class ActiveSessionMeta {

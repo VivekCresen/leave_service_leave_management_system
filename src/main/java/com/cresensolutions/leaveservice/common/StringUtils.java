@@ -1,6 +1,7 @@
 package com.cresensolutions.leaveservice.common;
 
 import java.util.Locale;
+import java.util.Map;
 
 public final class StringUtils {
 
@@ -34,7 +35,7 @@ public final class StringUtils {
         return trimmed;
     }
 
-    public static String extractString(java.util.Map<String, Object> map, String key) {
+    public static String extractString(Map<String, Object> map, String key) {
         Object val = map.get(key);
         return val instanceof String s ? s : null;
     }

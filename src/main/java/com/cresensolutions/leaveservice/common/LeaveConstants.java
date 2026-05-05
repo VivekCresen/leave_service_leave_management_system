@@ -132,6 +132,10 @@ public final class LeaveConstants {
         "\\b(?:leave\\s+polic\\w*|leave\\s+rule\\w*|leave\\s+type\\w*|types\\s+of\\s+leave|what\\s+leaves|available\\s+leave)\\b",
         Pattern.CASE_INSENSITIVE
     );
+    public static final Pattern CHATBOT_ALL_USERS_TABLE_INTENT_PATTERN = Pattern.compile(
+        "\\b(?:all\\s+(?:employees?|managers?|users?|staff|people)|list\\s+(?:all\\s+)?(?:employees?|managers?|users?|staff)|show\\s+(?:all\\s+)?(?:employees?|managers?|users?|staff)|employees?\\s+and\\s+managers?|managers?\\s+and\\s+employees?)\\b",
+        Pattern.CASE_INSENSITIVE
+    );
     public static final Pattern CHATBOT_SELF_SERVICE_INTENT_PATTERN = Pattern.compile(
         "\\b(?:my|what\\s+is\\s+my|what's\\s+my|current\\s+leave\\s+balance|how\\s+many\\s+(?:pending|approved)\\s+leaves?\\s+do\\s+i\\s+have|my\\s+(?:pending|approved)\\s+leaves?)\\b",
         Pattern.CASE_INSENSITIVE

@@ -1,0 +1,162 @@
+spring:
+  application:
+    name: LEAVE-SERVICE
+  config:
+    import: optional:configserver:http://localhost:8888
+  ai:
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_CHAT_MODEL:llama3.2}
+          temperature: 0.2
+  datasource:
+    url: jdbc:postgresql://localhost:5432/leave_management_system
+    username: postgres
+    password: postgres
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 30000
+      connection-timeout: 20000
+      max-lifetime: 1800000
+      pool-name: LeaveHikariPool
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        default_schema: public
+        default_batch_fetch_size: 50
+        jdbc:
+          fetch_size: 50
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    virtual-host: /
+    listener:
+      simple:
+        acknowledge-mode: auto
+        retry:
+          enabled: true
+          initial-interval: 2000
+          max-attempts: 3
+          multiplier: 2.0
+
+server:
+  port: 8082
+
+flowable:
+  database-schema-update: true
+  async-executor-activate: true
+  async-executor-lock-owner: ${spring.application.name}-${server.port:8082}
+  process-definition-location-prefix: classpath:/processes/
+  process-definition-location-suffixes:
+    - "**.bpmn20.xml"
+    - "**.bpmn"
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+    initial-instance-info-replication-interval-seconds: 5
+    instance-info-replication-interval-seconds: 5
+    registry-fetch-interval-seconds: 10
+    eureka-server-connect-timeout-seconds: 10
+    eureka-server-read-timeout-seconds: 10
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port:8082}
+    lease-renewal-interval-in-seconds: 10
+    lease-expiration-duration-in-seconds: 30
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,ratelimiters,prometheus,metrics
+  health:
+    circuitbreakers:
+      enabled: true
+    ratelimiters:
+      enabled: true
+    mail:
+      enabled: false
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 50ms,100ms,200ms,500ms,1s
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    urls:
+      - name: leave-service
+        url: /v3/api-docs
+      - name: flowable-api
+        url: /flowable-swagger-process.yaml
+  packages-to-scan: com.cresensolutions.leaveservice
+
+app:
+  login-url: ${FRONTEND_LOGIN_URL:http://localhost:4200/login}
+  chatbot:
+    model-timeout-seconds: ${CHATBOT_MODEL_TIMEOUT_SECONDS:60}
+  gemini:
+    api:
+      key: ${GEMINI_API_KEY}
+      model: ${GEMINI_MODEL:gemini-2.0-flash-lite}
+  groq:
+    api:
+      key: ${GROQ_API_KEY}
+      model: ${GROQ_MODEL:llama-3.1-8b-instant}
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:Q3Jlc2VuTGVhdmVNYW5hZ2VtZW50U3lzdGVtSldUU2VjcmV0S2V5Rm9ySFMyNTY=}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      ollama-cb:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 5
+        failure-rate-threshold: 60
+        slow-call-duration-threshold: 30s
+        slow-call-rate-threshold: 80
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+
+  retry:
+    instances:
+      ollama-retry:
+        max-attempts: 2
+        wait-duration: 1s
+        retry-exceptions:
+          - java.io.IOException
+          - org.springframework.web.client.ResourceAccessException
+        ignore-exceptions:
+          - java.util.concurrent.CancellationException
+          - java.util.concurrent.TimeoutException
+
+  ratelimiter:
+    instances:
+      chatbot-rl:
+        limit-for-period: 10
+        limit-refresh-period: 1s
+        timeout-duration: 0s
+        register-health-indicator: true

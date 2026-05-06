@@ -17,14 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * Consumes all leave-domain events from RabbitMQ.
- *
- * Email delivery and balance deduction are fully decoupled from the
- * request thread. If SMTP or the DB is temporarily unavailable, the
- * message stays in the queue and retries automatically (up to 3 times
- * per the listener container config, then moves to DLQ).
- */
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -37,16 +30,11 @@ public class LeaveEventListener {
     private final LeaveTypeRepository leaveTypeRepository;
     private final UserProfileRepository userProfileRepository;
 
-    // ── Leave submitted → notify manager ─────────────────────────────────────
-
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_SUBMITTED)
     public void onLeaveSubmitted(LeaveSubmittedEvent event) {
         log.info("[Leave] Submitted: leaveId={} user={} type={}", event.leaveId(), event.username(), event.leaveType());
-        // Extend here: push SSE to manager's browser via User Service cross-service call,
-        // or publish a cross-service event to user.events exchange
     }
 
-    // ── Manager approved → notify admin + employee ────────────────────────────
 
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_MANAGER_APPROVED)
     public void onManagerApproved(LeaveStatusEvent event) {
@@ -63,8 +51,6 @@ public class LeaveEventListener {
                 event.actorUsername(), event.leaveId());
     }
 
-    // ── Admin approved → notify employee + deduct balance ────────────────────
-
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_APPROVED)
     public void onLeaveApproved(LeaveStatusEvent event) {
         log.info("[Leave] Approved: leaveId={} days={}", event.leaveId(), event.days());
@@ -77,7 +63,6 @@ public class LeaveEventListener {
                 event.actorUsername(), event.actorRole(), null);
     }
 
-    // ── Rejected → notify employee ────────────────────────────────────────────
 
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_REJECTED)
     public void onLeaveRejected(LeaveStatusEvent event) {
@@ -91,25 +76,18 @@ public class LeaveEventListener {
                 event.actorUsername(), event.actorRole(), event.rejectionReason());
     }
 
-    // ── Partial decision → notify employee ───────────────────────────────────
-
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_PARTIAL)
     public void onPartialDecision(LeaveStatusEvent event) {
         log.info("[Leave] Partial decision: leaveId={} approved={} rejected={}",
                 event.leaveId(), event.approvedDates().size(), event.rejectedDates().size());
-        // Extend here: send partial notification email using approvedDates + rejectedDates
-    }
 
-    // ── Cancelled → notify manager ────────────────────────────────────────────
+    }
 
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_CANCELLED)
     public void onLeaveCancelled(LeaveCancelledEvent event) {
         log.info("[Leave] Cancelled: leaveId={} user={}", event.leaveId(), event.username());
-        // Extend here: notify manager that the leave was cancelled,
-        // publish cross-service event so User Service can update SSE state
-    }
 
-    // ── Reminder → dispatch via existing service ──────────────────────────────
+    }
 
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_REMINDER)
     public void onLeaveReminder(LeaveReminderEvent event) {
@@ -120,8 +98,6 @@ public class LeaveEventListener {
                 event.employeeName(), event.leaveType(),
                 event.reason(), event.processInstanceId(), event.taskId());
     }
-
-    // ── Admin notify (from Flowable) ──────────────────────────────────────────
 
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_ADMIN_NOTIFY)
     public void onAdminNotify(LeaveStatusEvent event) {
@@ -138,16 +114,12 @@ public class LeaveEventListener {
                 event.actorUsername(), event.leaveId());
     }
 
-    // ── Balance deduction (with DLQ safety net) ───────────────────────────────
-
     @RabbitListener(queues = RabbitMQConfig.Q_LEAVE_BALANCE_DEDUCT)
     public void onBalanceDeduct(LeaveBalanceDeductEvent event) {
         log.info("[Leave] Balance deduct: userId={} leaveTypeId={} days={}",
                 event.userId(), event.leaveTypeId(), event.days());
         leaveBalanceService.deductLeaveBalance(event.userId(), event.leaveTypeId(), event.days());
     }
-
-    // ── helpers ───────────────────────────────────────────────────────────────
 
     private String resolveEmployeeName(Long userId) {
         if (userId == null) return "Employee";

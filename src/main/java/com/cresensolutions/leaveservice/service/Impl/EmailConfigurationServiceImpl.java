@@ -6,10 +6,12 @@ import com.cresensolutions.leaveservice.repository.EmailConfigurationRepository;
 import com.cresensolutions.leaveservice.service.EmailConfigurationService;
 import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
 @Service
+@Transactional(readOnly = true)
 public class EmailConfigurationServiceImpl implements EmailConfigurationService {
 
     private final EmailConfigurationRepository emailConfigurationRepository;

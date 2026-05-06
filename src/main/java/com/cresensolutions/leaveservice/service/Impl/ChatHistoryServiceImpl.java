@@ -59,9 +59,8 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         int nextQuestionId = messages.size() + 1;
 
         if (createdNewConversation) {
-            ObjectNode meta = conversation.with("meta");
-            meta.put("chatTitle", buildChatTitle(qaPair.question()));
-            meta.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+            conversation.put("chatTitle", buildChatTitle(qaPair.question()));
+            conversation.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
         }
 
         messages.add(buildMessageEntry(nextQuestionId, qaPair));
@@ -86,28 +85,37 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
         if (conversations.has(conversationId)) {
             JsonNode existing = conversations.get(conversationId);
             if (existing.isObject()) {
-                return (ObjectNode) existing;
+                ObjectNode conv = (ObjectNode) existing;
+                // Migrate old { meta, messages } format to flat format
+                if (conv.has("meta") && conv.get("meta").isObject()) {
+                    ObjectNode flat = objectMapper.createObjectNode();
+                    JsonNode meta = conv.get("meta");
+                    meta.fields().forEachRemaining(e -> flat.set(e.getKey(), e.getValue()));
+                    flat.set("messages", conv.has("messages") ? conv.get("messages") : objectMapper.createArrayNode());
+                    conversations.set(conversationId, flat);
+                    return flat;
+                }
+                return conv;
             }
-            // Migrate old array format to new { meta, messages } format
+            // Migrate old array format to flat structure
             if (existing.isArray()) {
                 return migrateConversationToNewFormat((ArrayNode) existing, conversationId, userProfile);
             }
         }
 
-        // Create new conversation with meta + messages structure
+        // Create new flat conversation structure
         ObjectNode conversation = objectMapper.createObjectNode();
-        ObjectNode meta = conversation.putObject("meta");
-        meta.put("conversation_id", conversationId);
-        meta.put("username", userProfile.getUserName());
+        conversation.put("conversation_id", conversationId);
+        conversation.put("username", userProfile.getUserName());
         if (userProfile.getId() != null) {
-            meta.put("user_id", userProfile.getId());
+            conversation.put("user_id", userProfile.getId());
         } else {
-            meta.putNull("user_id");
+            conversation.putNull("user_id");
         }
-        meta.put("profile", "localhost");
-        meta.put("response_type", "text");
-        meta.put("chatTitle", buildChatTitle(qaPair.question()));
-        meta.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        conversation.put("profile", "localhost");
+        conversation.put("response_type", "text");
+        conversation.put("chatTitle", buildChatTitle(qaPair.question()));
+        conversation.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
         conversation.putArray("messages");
         conversations.set(conversationId, conversation);
         return conversation;
@@ -115,28 +123,27 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
 
     private ObjectNode migrateConversationToNewFormat(ArrayNode oldMessages, String conversationId, UserProfile userProfile) {
         ObjectNode conversation = objectMapper.createObjectNode();
-        ObjectNode meta = conversation.putObject("meta");
         ArrayNode messages = conversation.putArray("messages");
 
-        // Extract meta from first message if available
+        // Extract fields from first message if available, write flat
         if (oldMessages.size() > 0) {
             JsonNode first = oldMessages.get(0);
-            meta.put("chatTitle", first.path("chatTitle").asText(LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE));
-            meta.put("chatDate", first.path("chatDate").asText(""));
-            meta.put("username", first.path("username").asText(userProfile.getUserName()));
-            meta.put("user_id", first.path("user_id").asLong(userProfile.getId()));
-            meta.put("profile", first.path("profile").asText("localhost"));
+            conversation.put("chatTitle", first.path("chatTitle").asText(LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE));
+            conversation.put("chatDate", first.path("chatDate").asText(""));
+            conversation.put("username", first.path("username").asText(userProfile.getUserName()));
+            conversation.put("user_id", first.path("user_id").asLong(userProfile.getId()));
+            conversation.put("profile", first.path("profile").asText("localhost"));
         } else {
-            meta.put("chatTitle", LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE);
-            meta.put("chatDate", "");
-            meta.put("username", userProfile.getUserName());
-            meta.put("user_id", userProfile.getId());
-            meta.put("profile", "localhost");
+            conversation.put("chatTitle", LeaveConstants.CHATBOT_SESSION_DEFAULT_TITLE);
+            conversation.put("chatDate", "");
+            conversation.put("username", userProfile.getUserName());
+            conversation.put("user_id", userProfile.getId());
+            conversation.put("profile", "localhost");
         }
-        meta.put("conversation_id", conversationId);
-        meta.put("response_type", "text");
+        conversation.put("conversation_id", conversationId);
+        conversation.put("response_type", "text");
 
-        // Migrate messages, stripping redundant fields
+        // Migrate messages
         for (JsonNode oldMsg : oldMessages) {
             ObjectNode newMsg = objectMapper.createObjectNode();
             newMsg.put("question", oldMsg.path("question").asText(""));
@@ -212,14 +219,13 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
             JsonNode qaPairs = sessionNode.path("qa_pairs");
 
             ObjectNode conversation = objectMapper.createObjectNode();
-            ObjectNode meta = conversation.putObject("meta");
-            meta.put("conversation_id", conversationId);
-            meta.put("chatTitle", title);
-            meta.put("chatDate", "");
-            meta.put("username", userProfile.getUserName());
-            meta.put("user_id", userProfile.getId());
-            meta.put("profile", "localhost");
-            meta.put("response_type", "text");
+            conversation.put("conversation_id", conversationId);
+            conversation.put("chatTitle", title);
+            conversation.put("chatDate", "");
+            conversation.put("username", userProfile.getUserName());
+            conversation.put("user_id", userProfile.getId());
+            conversation.put("profile", "localhost");
+            conversation.put("response_type", "text");
             ArrayNode messages = conversation.putArray("messages");
 
             if (qaPairs.isArray()) {

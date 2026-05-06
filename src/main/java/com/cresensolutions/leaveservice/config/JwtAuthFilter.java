@@ -1,35 +1,41 @@
 package com.cresensolutions.leaveservice.config;
 
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
-import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.io.Decoders;
-import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import javax.crypto.SecretKey;
 import java.io.IOException;
-import java.util.Date;
 import java.util.List;
+import java.util.Set;
 
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
-    private final SecretKey signingKey;
+    private static final String HEADER_USERNAME = "X-Auth-Username";
+    private static final String HEADER_ROLE = "X-Auth-Role";
 
-    public JwtAuthFilter(@Value("${security.jwt.secret}") String secret) {
-        this.signingKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
+    private static final Set<String> PUBLIC_PATHS = Set.of(
+            "/actuator/health",
+            "/actuator/info",
+            "/actuator/prometheus",
+            "/actuator/metrics",
+            "/v3/api-docs",
+            "/swagger-ui",
+            "/swagger-ui.html",
+            "/flowable-swagger-process.yaml"
+    );
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return isPublicPath(path);
     }
 
     @Override
@@ -38,43 +44,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                                     FilterChain chain)
             throws ServletException, IOException {
 
-        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
+        String username = request.getHeader(HEADER_USERNAME);
+        String role = request.getHeader(HEADER_ROLE);
 
-        if (header == null || !header.startsWith("Bearer ")) {
-            chain.doFilter(request, response);
+        if (username == null || username.isBlank()) {
+            sendUnauthorized(response, "Missing authentication headers from gateway");
             return;
         }
 
-        String token = header.substring(7);
+        List<SimpleGrantedAuthority> authorities = (role != null && !role.isBlank())
+                ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                : List.of();
 
-        try {
-            Claims claims = Jwts.parser()
-                    .verifyWith(signingKey)
-                    .build()
-                    .parseSignedClaims(token)
-                    .getPayload();
+        UsernamePasswordAuthenticationToken auth =
+                new UsernamePasswordAuthenticationToken(username, null, authorities);
 
-            if (claims.getExpiration().before(new Date())) {
-                sendUnauthorized(response, "Token expired");
-                return;
-            }
-
-            String username = claims.getSubject();
-            String role     = claims.get("role", String.class);
-
-            List<SimpleGrantedAuthority> authorities = (role != null && !role.isBlank())
-                    ? List.of(new SimpleGrantedAuthority("ROLE_" + role))
-                    : List.of();
-
-            UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(username, null, authorities);
-
-            SecurityContextHolder.getContext().setAuthentication(auth);
-
-        } catch (JwtException | IllegalArgumentException e) {
-            sendUnauthorized(response, "Invalid token");
-            return;
-        }
+        SecurityContextHolder.getContext().setAuthentication(auth);
 
         chain.doFilter(request, response);
     }
@@ -84,5 +69,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json");
         response.getWriter().write("{\"error\":\"" + message + "\"}");
+    }
+
+    private boolean isPublicPath(String path) {
+        if (PUBLIC_PATHS.contains(path)) {
+            return true;
+        }
+        return path.startsWith("/v3/api-docs") || path.startsWith("/swagger-ui");
     }
 }

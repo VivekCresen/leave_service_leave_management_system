@@ -140,6 +140,14 @@ public final class LeaveConstants {
         "\\b(?:my|what\\s+is\\s+my|what's\\s+my|current\\s+leave\\s+balance|how\\s+many\\s+(?:pending|approved)\\s+leaves?\\s+do\\s+i\\s+have|my\\s+(?:pending|approved)\\s+leaves?)\\b",
         Pattern.CASE_INSENSITIVE
     );
+    public static final Pattern CHATBOT_LAST_CREATED_INTENT_PATTERN = Pattern.compile(
+        "\\b(?:last\\s+(?:created|added|registered|joined)|newest\\s+(?:employee|user|member|manager|staff)|recently\\s+(?:created|added|joined)|latest\\s+(?:employee|user|member|account|manager|staff))\\b",
+        Pattern.CASE_INSENSITIVE
+    );
+    public static final Pattern CHATBOT_TOTAL_COUNT_INTENT_PATTERN = Pattern.compile(
+        "\\b(?:how\\s+many\\s+(?:employees?|users?|managers?|staff|people)|total\\s+(?:employees?|users?|managers?|staff)|count\\s+(?:of\\s+)?(?:employees?|users?|managers?))\\b",
+        Pattern.CASE_INSENSITIVE
+    );
     public static final Set<String> CHATBOT_STOP_WORDS = Set.of(
         "what", "when", "where", "which", "who", "whose", "whom", "why", "how",
         "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
@@ -176,14 +184,13 @@ public final class LeaveConstants {
         + "LEAVE BALANCE: stored as JSONB in employee_leave.leaves. Each key is a leave_unique_name (e.g. ANNUAL_LEAVE), "
         + "value contains allocated and used days. Remaining = allocated - used.\n\n"
         + "RULES:\n"
-        + "- Answer ONLY based on the database data provided below.\n"
+        + "- If the DATABASE CONTEXT below contains relevant data, answer using that data with specific names, counts, statuses, and dates.\n"
+        + "- If the DATABASE CONTEXT is empty or not relevant to the question, answer using your general knowledge — do NOT say you cannot answer.\n"
         + "- Use available tools for live user-specific facts: leave balance, pending/approved leave counts, user profile lookup.\n"
         + "- If the user asks about 'my' data and the current logged-in username is present in the context, use that username when calling tools.\n"
-        + "- The context includes all known schemas and question-specific live rows pulled from the database.\n"
-        + "- Always give specific answers with names, counts, statuses, and dates from the data.\n"
-        + "- Never say you cannot determine the answer if the data is present in the provided context.\n"
+        + "- Always give specific answers with names, counts, statuses, and dates from the data when available.\n"
         + "- For date-based questions (e.g. 'on leave today'), compare against today's date: {today}.\n"
-        + "- Keep answers concise and factual. Do not make up data.\n\n"
+        + "- Keep answers concise and helpful. Do not make up database records, but do answer general questions freely.\n\n"
         + "DATABASE CONTEXT (live data):\n"
         + "{dbContext}";
     public static final String CHATBOT_USER_TEMPLATE = "{question}";

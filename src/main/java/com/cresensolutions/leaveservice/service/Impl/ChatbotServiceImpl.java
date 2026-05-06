@@ -138,7 +138,11 @@ public class ChatbotServiceImpl implements ChatbotService {
             new DirectIntent(LeaveConstants.CHATBOT_UPCOMING_HOLIDAY_INTENT_PATTERN, (message, username) -> answerUpcomingHolidayQuestion()),
             new DirectIntent(LeaveConstants.CHATBOT_ON_LEAVE_TODAY_INTENT_PATTERN, (message, username) -> answerOnLeaveTodayQuestion()),
             new DirectIntent(LeaveConstants.CHATBOT_LEAVE_POLICY_INTENT_PATTERN,
-                (message, username) -> answerLeavePolicyQuestion())
+                (message, username) -> answerLeavePolicyQuestion()),
+            new DirectIntent(LeaveConstants.CHATBOT_LAST_CREATED_INTENT_PATTERN,
+                (message, username) -> answerLastCreatedUserQuestion(message)),
+            new DirectIntent(LeaveConstants.CHATBOT_TOTAL_COUNT_INTENT_PATTERN,
+                (message, username) -> answerUserCountQuestion(message))
         );    }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -350,8 +354,8 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     @SuppressWarnings("unused")
     private String runModelCallFallback(Prompt prompt, String userMessage, String requestId, Throwable t) {
-        log.warn("Ollama circuit breaker fallback triggered: {}", t.getMessage());
-        return "Sorry, the AI assistant is temporarily unavailable. Please try again in a moment.";
+        log.warn("Ollama circuit breaker fallback triggered for message='{}': {}", userMessage, t.getMessage());
+        return "I'm currently unable to reach the AI model. For leave balances, policies, holidays, or employee info, please ask a more specific question and I'll answer directly from the database.";
     }
 
     private String tryDirectDatabaseAnswer(String userMessage, String currentUsername, String role) {
@@ -520,6 +524,64 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     private String answerOnLeaveTodayQuestion() {
         return answerOnLeaveTodayQuestion(null, null);
+    }
+
+    private String answerLastCreatedUserQuestion(String userMessage) {
+        String normalized = userMessage == null ? "" : userMessage.toLowerCase(Locale.ROOT);
+        boolean wantsManager  = normalized.contains("manager");
+        boolean wantsEmployee = normalized.contains("employee") || normalized.contains("staff");
+
+        try {
+            List<UserProfile> users = userProfileRepository.findAll(
+                org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createDate")
+            );
+            if (users == null || users.isEmpty()) {
+                return "No users found in the system.";
+            }
+            UserProfile last = users.stream()
+                .filter(u -> {
+                    if (wantsManager)  return "MANAGER".equalsIgnoreCase(u.getRole() != null ? u.getRole().toString() : "");
+                    if (wantsEmployee) return "EMPLOYEE".equalsIgnoreCase(u.getRole() != null ? u.getRole().toString() : "");
+                    return true;
+                })
+                .findFirst()
+                .orElse(null);
+            if (last == null) {
+                return "No matching user found.";
+            }
+            String role = last.getRole() != null ? last.getRole().toString() : "Unknown";
+            String name = last.getFullName() != null && !last.getFullName().isBlank() ? last.getFullName() : last.getUserName();
+            return "The last created " + (wantsManager ? "manager" : wantsEmployee ? "employee" : "user") +
+                " is **" + name + "** (username: `" + last.getUserName() + "`, role: " + role + ").";
+        } catch (Exception e) {
+            log.warn("Failed to fetch last created user: {}", e.getMessage());
+            return "I couldn't retrieve the last created user at this time.";
+        }
+    }
+
+    private String answerUserCountQuestion(String userMessage) {
+        String normalized = userMessage == null ? "" : userMessage.toLowerCase(Locale.ROOT);
+        boolean wantsManagers  = normalized.contains("manager");
+        boolean wantsEmployees = normalized.contains("employee") || normalized.contains("staff");
+
+        try {
+            List<UserProfile> all = userProfileRepository.findAll();
+            if (all == null || all.isEmpty()) {
+                return "No users found in the system.";
+            }
+            if (wantsManagers && !wantsEmployees) {
+                long count = all.stream().filter(u -> "MANAGER".equalsIgnoreCase(u.getRole() != null ? u.getRole().toString() : "")).count();
+                return "There are **" + count + "** manager(s) in the system.";
+            }
+            if (wantsEmployees && !wantsManagers) {
+                long count = all.stream().filter(u -> "EMPLOYEE".equalsIgnoreCase(u.getRole() != null ? u.getRole().toString() : "")).count();
+                return "There are **" + count + "** employee(s) in the system.";
+            }
+            return "There are **" + all.size() + "** total user(s) in the system.";
+        } catch (Exception e) {
+            log.warn("Failed to count users: {}", e.getMessage());
+            return "I couldn't retrieve the user count at this time.";
+        }
     }
 
     private String answerOnLeaveTodayQuestion(String currentUsername, String role) {

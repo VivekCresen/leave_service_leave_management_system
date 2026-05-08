@@ -1386,7 +1386,6 @@ class LeaveServiceImplTest {
         DelegateExecution execution = mock(DelegateExecution.class);
         when(execution.getVariable("leaveId")).thenReturn(10L);
         when(execution.getVariable("actorUsername")).thenReturn("manager1");
-        when(execution.getVariable("employeeName")).thenReturn("John Doe");
 
         when(leaveRepository.findDetailedById(10L)).thenReturn(Optional.of(leaveRecord));
 

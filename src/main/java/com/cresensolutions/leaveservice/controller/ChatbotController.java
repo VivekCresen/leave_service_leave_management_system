@@ -3,6 +3,7 @@ package com.cresensolutions.leaveservice.controller;
 import com.cresensolutions.leaveservice.common.LeaveConstants;
 import com.cresensolutions.leaveservice.common.StringUtils;
 import com.cresensolutions.leaveservice.service.ChatbotService;
+import com.cresensolutions.leaveservice.service.ChatHistoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +16,7 @@ import java.util.Map;
 public class ChatbotController {
 
     private final ChatbotService chatbotService;
+    private final ChatHistoryService chatHistoryService;
 
     @PostMapping("/chat")
     public ResponseEntity<Map<String, String>> chat(@RequestBody Map<String, Object> request) {
@@ -45,5 +47,36 @@ public class ChatbotController {
             LeaveConstants.CHATBOT_CANCELLED_KEY, cancelled,
             LeaveConstants.CHATBOT_REQUEST_ID_KEY, requestId
         ));
+    }
+
+    @GetMapping("/history/status")
+    public ResponseEntity<Map<String, Object>> getHistoryStatus() {
+        try {
+            return ResponseEntity.ok(Map.of(
+                "status", "ok",
+                "message", "Chat history service is operational"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                "status", "error",
+                "message", e.getMessage()
+            ));
+        }
+    }
+
+    @GetMapping("/history/{username}")
+    public ResponseEntity<Map<String, Object>> getChatHistory(@PathVariable String username) {
+        try {
+            // This will be implemented in ChatHistoryService
+            return ResponseEntity.ok(Map.of(
+                "status", "ok",
+                "message", "Chat history retrieval endpoint - to be implemented"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                "status", "error",
+                "message", e.getMessage()
+            ));
+        }
     }
 }

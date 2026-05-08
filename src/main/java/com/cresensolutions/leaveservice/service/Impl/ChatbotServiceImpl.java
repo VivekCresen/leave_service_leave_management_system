@@ -70,6 +70,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     private final Cache<String, CachedAnswer> answerCache;
     private final Cache<String, String> schemaOverviewCache;
     private final Cache<String, Optional<UserProfile>> userProfileCache;
+    private final Cache<String, List<TableInfo>> tableInfoCache;
     private final Map<String, Future<String>> inFlightRequests = new ConcurrentHashMap<>();
     private final Set<String> cancelledRequestIds = ConcurrentHashMap.newKeySet();
     private final List<DirectIntent> directIntents;
@@ -126,6 +127,10 @@ public class ChatbotServiceImpl implements ChatbotService {
         this.userProfileCache = Caffeine.newBuilder()
             .expireAfterWrite(LeaveConstants.CHATBOT_USER_LOOKUP_CACHE_MINUTES, TimeUnit.MINUTES)
             .maximumSize(LeaveConstants.CHATBOT_USER_LOOKUP_CACHE_MAX_SIZE)
+            .build();
+        this.tableInfoCache = Caffeine.newBuilder()
+            .expireAfterWrite(LeaveConstants.CHATBOT_SCHEMA_CACHE_MINUTES, TimeUnit.MINUTES)
+            .maximumSize(1)
             .build();
         this.directIntents = List.of(
             new DirectIntent(LeaveConstants.CHATBOT_LEAVE_BALANCE_INTENT_PATTERN, this::answerLeaveBalanceQuestion),
@@ -269,8 +274,16 @@ public class ChatbotServiceImpl implements ChatbotService {
                                        long startMs,
                                        String conversationId,
                                        boolean newConversation) {
+        if (currentUsername == null || currentUsername.isBlank()) {
+            log.warn("ChatHistory: cannot save - username is null or empty");
+            return;
+        }
+
         try {
             long latencyMs = System.currentTimeMillis() - startMs;
+            log.debug("ChatHistory: attempting to save - user='{}', conversationId='{}', newConversation={}", 
+                currentUsername, conversationId, newConversation);
+            
             chatHistoryService.addQaPair(
                 currentUsername,
                 conversationId,
@@ -284,8 +297,10 @@ public class ChatbotServiceImpl implements ChatbotService {
                     OffsetDateTime.now()
                 )
             );
+            
+            log.info("ChatHistory: successfully saved for user '{}'", currentUsername);
         } catch (Exception e) {
-            log.warn("Failed to save chat history for user '{}': {}", currentUsername, e.getMessage());
+            log.error("ChatHistory: failed to save for user '{}' - {}", currentUsername, e.getMessage(), e);
         }
     }
 
@@ -379,6 +394,14 @@ public class ChatbotServiceImpl implements ChatbotService {
                 String resolvedUsername = isEmployee(role)
                     ? normalizeUsername(currentUsername)
                     : currentUsername;
+                if (isManager(role)) {
+                    // Check if the message targets a specific user and if that user is under this manager
+                    String targetFromMessage = resolveQuestionUsername(userMessage, currentUsername);
+                    if (targetFromMessage != null && !targetFromMessage.equalsIgnoreCase(currentUsername)
+                            && !isUserUnderManager(targetFromMessage, currentUsername)) {
+                        return "You can only view data for employees in your team.";
+                    }
+                }
                 return intent.handler().apply(userMessage, resolvedUsername);
             }
         }
@@ -818,7 +841,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         ctx.append(searchTerms.isEmpty() ? "[none]\n" : String.join(", ", searchTerms) + "\n");
 
         try (Connection conn = dataSource.getConnection()) {
-            List<TableInfo> tables = loadTables(conn.getMetaData());
+            List<TableInfo> tables = loadAndCacheTables(conn.getMetaData());
             List<TableInfo> relevantTables = chooseRelevantTables(tables, searchTerms);
             ctx.append("\n=== LIVE MATCHED DATA ===\n");
             for (TableInfo table : relevantTables) {
@@ -860,7 +883,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     private String buildSchemaOverview() {
         StringBuilder ctx = new StringBuilder();
         try (Connection conn = dataSource.getConnection()) {
-            List<TableInfo> tables = loadTables(conn.getMetaData());
+            List<TableInfo> tables = loadAndCacheTables(conn.getMetaData());
             String currentSchema = null;
             int tableCount = 0;
             for (TableInfo table : tables) {
@@ -884,6 +907,16 @@ public class ChatbotServiceImpl implements ChatbotService {
             ctx.append("Error reading database: ").append(e.getMessage());
         }
         return ctx.toString();
+    }
+
+    private List<TableInfo> loadAndCacheTables(DatabaseMetaData meta) throws SQLException {
+        List<TableInfo> cached = tableInfoCache.getIfPresent(LeaveConstants.CHATBOT_SCHEMA_OVERVIEW_CACHE_KEY);
+        if (cached != null) {
+            return cached;
+        }
+        List<TableInfo> tables = loadTables(meta);
+        tableInfoCache.put(LeaveConstants.CHATBOT_SCHEMA_OVERVIEW_CACHE_KEY, tables);
+        return tables;
     }
 
     private List<TableInfo> loadTables(DatabaseMetaData meta) throws SQLException {
@@ -1150,14 +1183,30 @@ public class ChatbotServiceImpl implements ChatbotService {
         }
 
         Optional<String> targetUsername = extractUserLookupUsername(userMessage);
-        if (targetUsername.isPresent() && !targetUsername.get().equalsIgnoreCase(currentUsername)) {
-            return "You can only view your own leave data.";
+        if (targetUsername.isPresent()) {
+            String target = targetUsername.get();
+            // Only deny if the target is a real user and it's not the current user
+            Optional<UserProfile> targetProfile = findUserProfile(target);
+            if (targetProfile.isPresent() && !target.equalsIgnoreCase(currentUsername)) {
+                return "You can only view your own leave data.";
+            }
         }
 
         String exactLookup = resolveExactUsernameQuery(userMessage);
         if (exactLookup != null && !exactLookup.equalsIgnoreCase(currentUsername)) {
             return "You can only view your own leave data.";
         }
+
+        // Also check if the message resolves to a different user via token extraction
+        String resolvedUsername = resolveQuestionUsername(userMessage, currentUsername);
+        if (resolvedUsername != null && !resolvedUsername.equalsIgnoreCase(currentUsername)) {
+            // Only deny if the resolved user actually exists and is different
+            Optional<UserProfile> resolvedProfile = findUserProfile(resolvedUsername);
+            if (resolvedProfile.isPresent()) {
+                return "You can only view your own leave data.";
+            }
+        }
+
         return null;
     }
 

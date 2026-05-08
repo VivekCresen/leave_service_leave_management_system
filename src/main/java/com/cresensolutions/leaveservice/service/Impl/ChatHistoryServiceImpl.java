@@ -37,48 +37,64 @@ public class ChatHistoryServiceImpl implements ChatHistoryService {
     @Transactional
     public void addQaPair(String username, String conversationId, boolean newConversation, QaPair qaPair) {
         if (username == null || username.isBlank() || qaPair == null) {
+            log.warn("ChatHistory: invalid input - username='{}', qaPair={}", username, qaPair);
             return;
         }
 
         String user = username.trim();
         Optional<UserProfile> userOpt = userProfileRepository.findByUserNameIgnoreCase(user);
         if (userOpt.isEmpty()) {
-            log.warn("ChatHistory: user '{}' not found, skipping save", user);
+            log.warn("ChatHistory: user '{}' not found in database, skipping save", user);
             return;
         }
 
-        UserProfile userProfile = userOpt.get();
-        ChatHistory history = chatHistoryRepository.findByUserId(userProfile.getId()).orElseGet(() -> new ChatHistory(userProfile));
-
-        ObjectNode conversations = readConversationRoot(history.getConversations(), userProfile);
-        String targetConversationId = resolveConversationId(user, conversationId, newConversation, conversations);
-        boolean createdNewConversation = !conversations.has(targetConversationId);
-
-        ObjectNode conversation = getOrCreateConversation(conversations, targetConversationId, userProfile, qaPair);
-        ArrayNode messages = conversation.withArray("messages");
-        int nextQuestionId = messages.size() + 1;
-
-        if (createdNewConversation) {
-            conversation.put("chatTitle", buildChatTitle(qaPair.question()));
-            conversation.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
-        }
-
-        messages.add(buildMessageEntry(nextQuestionId, qaPair));
-
         try {
-            history.setConversations(objectMapper.writeValueAsString(conversations));
+            UserProfile userProfile = userOpt.get();
+            ChatHistory history = chatHistoryRepository.findByUserId(userProfile.getId())
+                .orElseGet(() -> {
+                    log.info("ChatHistory: creating new chat history for user '{}'", user);
+                    return new ChatHistory(userProfile);
+                });
+
+            ObjectNode conversations = readConversationRoot(history.getConversations(), userProfile);
+            String targetConversationId = resolveConversationId(user, conversationId, newConversation, conversations);
+            boolean createdNewConversation = !conversations.has(targetConversationId);
+
+            log.info("ChatHistory: processing conversation '{}' for user '{}' (new={})", 
+                targetConversationId, user, createdNewConversation);
+
+            ObjectNode conversation = getOrCreateConversation(conversations, targetConversationId, userProfile, qaPair);
+            ArrayNode messages = conversation.withArray("messages");
+            int nextQuestionId = messages.size() + 1;
+
+            if (createdNewConversation) {
+                conversation.put("chatTitle", buildChatTitle(qaPair.question()));
+                conversation.put("chatDate", qaPair.askedAt().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+            }
+
+            messages.add(buildMessageEntry(nextQuestionId, qaPair));
+
+            try {
+                history.setConversations(objectMapper.writeValueAsString(conversations));
+            } catch (Exception e) {
+                log.error("ChatHistory: failed to serialize conversations for user '{}'", user, e);
+                throw new IllegalStateException("Failed to serialize chat history conversations", e);
+            }
+
+            if (createdNewConversation) {
+                history.incrementSessions();
+            }
+            history.incrementQaPairs();
+            
+            ChatHistory saved = chatHistoryRepository.save(history);
+            log.info("ChatHistory: successfully saved to database - id={}, user='{}', totalSessions={}, totalQaPairs={}", 
+                saved.getId(), user, saved.getTotalSessions(), saved.getTotalQaPairs());
+
+            activeSessionMeta.put(user, new ActiveSessionMeta(targetConversationId, userProfile.getId()));
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to serialize chat history conversations", e);
+            log.error("ChatHistory: unexpected error saving chat history for user '{}'", user, e);
+            throw e;
         }
-
-        if (createdNewConversation) {
-            history.incrementSessions();
-        }
-        history.incrementQaPairs();
-        chatHistoryRepository.save(history);
-
-        activeSessionMeta.put(user, new ActiveSessionMeta(targetConversationId, userProfile.getId()));
-        log.debug("ChatHistory: saved Q&A to conversation '{}' for user '{}'", targetConversationId, user);
     }
 
     private ObjectNode getOrCreateConversation(ObjectNode conversations, String conversationId, UserProfile userProfile, QaPair qaPair) {

@@ -20,7 +20,6 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -1332,7 +1331,7 @@ class ChatbotServiceImplTest {
 
         // EMPLOYEE role — user_profile table should have WHERE LOWER(user_name) = LOWER(?) filter
         String response = chatbotService.chat(
-            "show user profile role info", "john", "EMPLOYEE", null, null, false);
+            "get profile role info for user_profile", "john", "EMPLOYEE", null, null, false);
 
         assertThat(response).isNotNull();
         // Verify the prepared statement was called (role filter was applied)
@@ -1432,8 +1431,6 @@ class ChatbotServiceImplTest {
     @Test
     void chat_employeeRole_exactUsernameInMessage_matchesSelf_isAllowed() {
         when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
-        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
-            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 3.0}));
 
         // "john" is the current user — exact lookup matches self, allowed
         String response = chatbotService.chat(
@@ -1480,9 +1477,713 @@ class ChatbotServiceImplTest {
 
         // EMPLOYEE role — employee_leave table should have user_id = (...) filter
         String response = chatbotService.chat(
-            "show employee leave gender data", "john", "EMPLOYEE", null, null, false);
+            "retrieve employee_leave gender data", "john", "EMPLOYEE", null, null, false);
 
         assertThat(response).isNotNull();
         verify(stmt, atLeastOnce()).setString(anyInt(), eq("john"));
+    }
+
+    // ── answerLastCreatedUserQuestion — any user ──────────────────────────────
+
+    @Test
+    void chat_lastCreatedIntent_anyUser_returnsLastUser() throws Exception {
+        UserProfile manager = new UserProfile();
+        setField(manager, "id", 10L);
+        setField(manager, "userName", "mgr1");
+        setField(manager, "fullName", "Manager One");
+        setField(manager, "role", "MANAGER");
+        setField(manager, "active", true);
+
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(manager));
+
+        String response = chatbotService.chat("Who was the last added user?", "admin");
+
+        assertThat(response).containsIgnoringCase("Manager One");
+        assertThat(response).containsIgnoringCase("mgr1");
+    }
+
+    @Test
+    void chat_lastCreatedIntent_wantsManager_filtersManagers() throws Exception {
+        UserProfile emp = new UserProfile();
+        setField(emp, "id", 11L);
+        setField(emp, "userName", "emp1");
+        setField(emp, "fullName", "Emp One");
+        setField(emp, "role", "EMPLOYEE");
+        setField(emp, "active", true);
+
+        UserProfile mgr = new UserProfile();
+        setField(mgr, "id", 12L);
+        setField(mgr, "userName", "mgr2");
+        setField(mgr, "fullName", "Mgr Two");
+        setField(mgr, "role", "MANAGER");
+        setField(mgr, "active", true);
+
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(emp, mgr));
+
+        String response = chatbotService.chat("Who was the last added manager?", "admin");
+
+        assertThat(response).containsIgnoringCase("Mgr Two");
+        assertThat(response).doesNotContain("Emp One");
+    }
+
+    @Test
+    void chat_lastCreatedIntent_wantsEmployee_filtersEmployees() throws Exception {
+        UserProfile mgr = new UserProfile();
+        setField(mgr, "id", 13L);
+        setField(mgr, "userName", "mgr3");
+        setField(mgr, "fullName", "Mgr Three");
+        setField(mgr, "role", "MANAGER");
+        setField(mgr, "active", true);
+
+        UserProfile emp = new UserProfile();
+        setField(emp, "id", 14L);
+        setField(emp, "userName", "emp2");
+        setField(emp, "fullName", "Emp Two");
+        setField(emp, "role", "EMPLOYEE");
+        setField(emp, "active", true);
+
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(mgr, emp));
+
+        String response = chatbotService.chat("Who was the last added employee?", "admin");
+
+        assertThat(response).containsIgnoringCase("Emp Two");
+        assertThat(response).doesNotContain("Mgr Three");
+    }
+
+    @Test
+    void chat_lastCreatedIntent_noUsersFound_returnsNotFoundMessage() throws Exception {
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of());
+
+        String response = chatbotService.chat("Who was the last added user?", "admin");
+
+        assertThat(response).containsIgnoringCase("No users found");
+    }
+
+    @Test
+    void chat_lastCreatedIntent_noMatchingRole_returnsNoMatchMessage() throws Exception {
+        UserProfile emp = new UserProfile();
+        setField(emp, "id", 15L);
+        setField(emp, "userName", "emp3");
+        setField(emp, "fullName", "Emp Three");
+        setField(emp, "role", "EMPLOYEE");
+        setField(emp, "active", true);
+
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(emp));
+
+        // Asking for last manager but only employees exist
+        String response = chatbotService.chat("Who was the last added manager?", "admin");
+
+        assertThat(response).containsIgnoringCase("No matching user found");
+    }
+
+    @Test
+    void chat_lastCreatedIntent_userWithNoFullName_usesUsername() throws Exception {
+        UserProfile noName = new UserProfile();
+        setField(noName, "id", 16L);
+        setField(noName, "userName", "noname1");
+        setField(noName, "role", "EMPLOYEE");
+        setField(noName, "active", true);
+
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(noName));
+
+        String response = chatbotService.chat("Who was the last added staff?", "admin");
+
+        assertThat(response).containsIgnoringCase("noname1");
+    }
+
+    @Test
+    void chat_lastCreatedIntent_repositoryThrows_returnsErrorMessage() throws Exception {
+        when(userProfileRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenThrow(new RuntimeException("DB error"));
+
+        String response = chatbotService.chat("Who was the last added user?", "admin");
+
+        assertThat(response).containsIgnoringCase("couldn't retrieve");
+    }
+
+    // ── answerUserCountQuestion — total / managers / employees ────────────────
+
+    @Test
+    void chat_userCountIntent_totalCount_returnsTotal() throws Exception {
+        UserProfile u1 = buildUserWithRole(20L, "u1", "EMPLOYEE");
+        UserProfile u2 = buildUserWithRole(21L, "u2", "MANAGER");
+        when(userProfileRepository.findAll()).thenReturn(List.of(u1, u2));
+
+        String response = chatbotService.chat("How many users are there?", "admin");
+
+        assertThat(response).contains("2");
+        assertThat(response).containsIgnoringCase("total");
+    }
+
+    @Test
+    void chat_userCountIntent_managerCount_returnsManagerCount() throws Exception {
+        UserProfile emp = buildUserWithRole(22L, "emp1", "EMPLOYEE");
+        UserProfile mgr = buildUserWithRole(23L, "mgr1", "MANAGER");
+        when(userProfileRepository.findAll()).thenReturn(List.of(emp, mgr));
+
+        String response = chatbotService.chat("How many managers are there?", "admin");
+
+        assertThat(response).contains("1");
+        assertThat(response).containsIgnoringCase("manager");
+    }
+
+    @Test
+    void chat_userCountIntent_employeeCount_returnsEmployeeCount() throws Exception {
+        UserProfile emp1 = buildUserWithRole(24L, "emp2", "EMPLOYEE");
+        UserProfile emp2 = buildUserWithRole(25L, "emp3", "EMPLOYEE");
+        UserProfile mgr  = buildUserWithRole(26L, "mgr2", "MANAGER");
+        when(userProfileRepository.findAll()).thenReturn(List.of(emp1, emp2, mgr));
+
+        String response = chatbotService.chat("How many employees are there?", "admin");
+
+        assertThat(response).contains("2");
+        assertThat(response).containsIgnoringCase("employee");
+    }
+
+    @Test
+    void chat_userCountIntent_noUsers_returnsNotFoundMessage() throws Exception {
+        when(userProfileRepository.findAll()).thenReturn(List.of());
+
+        String response = chatbotService.chat("How many users are there?", "admin");
+
+        assertThat(response).containsIgnoringCase("No users found");
+    }
+
+    @Test
+    void chat_userCountIntent_repositoryThrows_returnsErrorMessage() throws Exception {
+        when(userProfileRepository.findAll()).thenThrow(new RuntimeException("DB error"));
+
+        String response = chatbotService.chat("How many users are there?", "admin");
+
+        assertThat(response).containsIgnoringCase("couldn't retrieve");
+    }
+
+    // ── answerAllUsersTableQuestion — ADMIN wantsBoth / wantsManagers / wantsEmployees ──
+
+    @Test
+    void chat_allUsersIntent_adminRole_wantsBoth_returnsAll() throws Exception {
+        UserProfile emp = buildUserWithRole(30L, "emp4", "EMPLOYEE");
+        UserProfile mgr = buildUserWithRole(31L, "mgr3", "MANAGER");
+        setField(emp, "active", true);
+        setField(mgr, "active", true);
+        when(userProfileRepository.findAll()).thenReturn(List.of(emp, mgr));
+
+        String response = chatbotService.chat("List all users", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).containsIgnoringCase("All Employees");
+    }
+
+    @Test
+    void chat_allUsersIntent_adminRole_wantsManagers_returnsManagers() throws Exception {
+        UserProfile mgr = buildUserWithRole(32L, "mgr4", "MANAGER");
+        when(userProfileRepository.findActiveByRole("MANAGER")).thenReturn(List.of(mgr));
+
+        String response = chatbotService.chat("List all managers", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).containsIgnoringCase("All Managers");
+        assertThat(response).containsIgnoringCase("mgr4");
+    }
+
+    @Test
+    void chat_allUsersIntent_adminRole_wantsEmployees_returnsEmployees() throws Exception {
+        UserProfile emp = buildUserWithRole(33L, "emp5", "EMPLOYEE");
+        when(userProfileRepository.findActiveByRole("EMPLOYEE")).thenReturn(List.of(emp));
+
+        String response = chatbotService.chat("List all employees", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).containsIgnoringCase("All Employees");
+        assertThat(response).containsIgnoringCase("emp5");
+    }
+
+    @Test
+    void chat_allUsersIntent_adminRole_noUsers_returnsNotFoundMessage() throws Exception {
+        when(userProfileRepository.findAll()).thenReturn(List.of());
+
+        String response = chatbotService.chat("List all users", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).containsIgnoringCase("No users found");
+    }
+
+    @Test
+    void chat_allUsersIntent_managerRole_returnsTeam() throws Exception {
+        UserProfile emp = buildUserWithRole(34L, "emp6", "EMPLOYEE");
+        when(userProfileRepository.findActiveByManagerUsername("manager1")).thenReturn(List.of(emp));
+
+        String response = chatbotService.chat(
+            "List all employees", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).containsIgnoringCase("Your Team Members");
+    }
+
+    @Test
+    void chat_allUsersIntent_managerRole_emptyTeam_returnsNotFoundMessage() throws Exception {
+        when(userProfileRepository.findActiveByManagerUsername("manager1")).thenReturn(List.of());
+
+        String response = chatbotService.chat(
+            "List all employees", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).containsIgnoringCase("No users found");
+    }
+
+    @Test
+    void chat_allUsersIntent_userWithNullFields_showsDashes() throws Exception {
+        // User with all null optional fields — table should show "-" placeholders
+        UserProfile sparse = new UserProfile();
+        setField(sparse, "id", 35L);
+        setField(sparse, "active", true);
+        when(userProfileRepository.findAll()).thenReturn(List.of(sparse));
+
+        String response = chatbotService.chat("List all users", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).contains("-");
+    }
+
+    // ── answerOnLeaveTodayQuestion — ADMIN role sees everyone ─────────────────
+
+    @Test
+    void chat_onLeaveTodayIntent_adminRole_seesEveryone() {
+        when(leaveRepository.findPeopleOnLeaveByDate(any()))
+            .thenReturn(rowList(
+                new Object[]{"john", "John Doe", "APPROVED"},
+                new Object[]{"jane", "Jane Smith", "APPROVED"}
+            ));
+
+        String response = chatbotService.chat(
+            "Who is on leave today?", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).containsIgnoringCase("John Doe");
+        assertThat(response).containsIgnoringCase("Jane Smith");
+        verify(leaveRepository).findPeopleOnLeaveByDate(any());
+        verify(leaveRepository, never()).findTeamOnLeaveByDateAndManager(any(), any());
+    }
+
+    @Test
+    void chat_onLeaveTodayIntent_adminRole_noOne_returnsNoOneMessage() {
+        when(leaveRepository.findPeopleOnLeaveByDate(any())).thenReturn(List.of());
+
+        String response = chatbotService.chat(
+            "Who is on leave today?", "admin", "ADMIN", null, null, false);
+
+        assertThat(response).containsIgnoringCase("No one");
+    }
+
+    // ── answerLeaveCountQuestion — user not found ─────────────────────────────
+
+    @Test
+    void chat_pendingLeaveIntent_userNotFound_returnsNotFoundMessage() {
+        lenient().when(userProfileRepository.findByUserNameIgnoreCase(anyString())).thenReturn(Optional.empty());
+
+        String response = chatbotService.chat("How many pending leaves do I have?", "ghost");
+
+        assertThat(response).containsIgnoringCase("couldn't find");
+    }
+
+    @Test
+    void chat_approvedLeaveIntent_userNotFound_returnsNotFoundMessage() {
+        lenient().when(userProfileRepository.findByUserNameIgnoreCase(anyString())).thenReturn(Optional.empty());
+
+        String response = chatbotService.chat("How many approved leaves do I have?", "ghost");
+
+        assertThat(response).containsIgnoringCase("couldn't find");
+    }
+
+    // ── answerUserLookupQuestion — inactive user, no role, no email ───────────
+
+    @Test
+    void chat_userLookupByName_inactiveUser_showsInactiveStatus() throws Exception {
+        UserProfile inactive = new UserProfile();
+        setField(inactive, "id", 40L);
+        setField(inactive, "userName", "olduser");
+        setField(inactive, "active", false);
+        when(userProfileRepository.findByUserNameIgnoreCase("olduser")).thenReturn(Optional.of(inactive));
+
+        String response = chatbotService.chat("Who is olduser?", "admin");
+
+        assertThat(response).containsIgnoringCase("inactive");
+    }
+
+    @Test
+    void chat_userLookupByName_noRoleNoEmail_omitsThoseFields() throws Exception {
+        UserProfile minimal = new UserProfile();
+        setField(minimal, "id", 41L);
+        setField(minimal, "userName", "minimal");
+        setField(minimal, "active", true);
+        when(userProfileRepository.findByUserNameIgnoreCase("minimal")).thenReturn(Optional.of(minimal));
+
+        String response = chatbotService.chat("Who is minimal?", "admin");
+
+        assertThat(response).contains("minimal");
+        assertThat(response).containsIgnoringCase("active");
+    }
+
+    // ── buildAnswerCacheKey — username in message makes it personal ───────────
+
+    @Test
+    void chat_messageContainsUsername_cacheKeyIsPersonal() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 5.0}));
+
+        // Message contains "john" — treated as personal, cache key scoped to user
+        chatbotService.chat("What is john's leave balance?", "john");
+        chatbotService.chat("What is john's leave balance?", "john");
+
+        // Second call hits cache — repository called only once
+        verify(employeeLeaveRepository, times(1)).findLeaveBalancesByUserId(1L);
+    }
+
+    // ── isCancelled — cancelled request is blocked ────────────────────────────
+
+    @Test
+    void chat_cancelledRequest_returnsCancel() throws Exception {
+        java.sql.Connection conn = mock(java.sql.Connection.class);
+        java.sql.DatabaseMetaData meta = mock(java.sql.DatabaseMetaData.class);
+        java.sql.ResultSet schemasRs = mock(java.sql.ResultSet.class);
+
+        lenient().when(dataSource.getConnection()).thenReturn(conn);
+        lenient().when(conn.getMetaData()).thenReturn(meta);
+        lenient().when(meta.getSchemas()).thenReturn(schemasRs);
+        lenient().when(schemasRs.next()).thenReturn(false);
+
+        @SuppressWarnings("unchecked")
+        java.util.concurrent.Future<String> future = mock(java.util.concurrent.Future.class);
+        when(modelExecutor.submit(any(java.util.concurrent.Callable.class))).thenReturn(future);
+        when(future.get(anyLong(), any())).thenThrow(new java.util.concurrent.CancellationException());
+
+        String response = chatbotService.chat(
+            "What is the leave approval workflow process?", "john", "req-x", null, false);
+
+        assertThat(response).containsIgnoringCase("cancelled");
+    }
+
+    // ── mapLeaveBalanceRow — short row (< 3 elements) returns null ────────────
+
+    @Test
+    void chat_leaveBalanceIntent_shortRow_isSkipped() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        // Row with only 2 elements — mapLeaveBalanceRow returns null, filtered out
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE"}));
+
+        String response = chatbotService.chat("What is my leave balance?", "john");
+
+        // All rows filtered → "does not have any readable"
+        assertThat(response).containsIgnoringCase("does not have");
+    }
+
+    // ── formatDisplayName — no fullName, no userName → default reference ──────
+
+    @Test
+    void chat_leaveBalanceIntent_userWithNoNameFields_usesDefaultReference() throws Exception {
+        UserProfile noFields = new UserProfile();
+        setField(noFields, "id", 50L);
+        setField(noFields, "active", true);
+        when(userProfileRepository.findByUserNameIgnoreCase("nofields")).thenReturn(Optional.of(noFields));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(50L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 3.0}));
+
+        String response = chatbotService.chat("What is my leave balance?", "nofields");
+
+        // formatDisplayName falls back to "this user"
+        assertThat(response).containsIgnoringCase("this user");
+    }
+
+    // ── formatBalance — integer value shows no decimal ────────────────────────
+
+    @Test
+    void chat_leaveBalanceIntent_integerBalance_noDecimalPoint() {
+        when(userProfileRepository.findByUserNameIgnoreCase("john")).thenReturn(Optional.of(user));
+        when(employeeLeaveRepository.findLeaveBalancesByUserId(1L))
+            .thenReturn(rowList(new Object[]{"Annual Leave", "ANNUAL_LEAVE", 5.0}));
+
+        String response = chatbotService.chat("What is my leave balance?", "john");
+
+        // 5.0 → "5 days" not "5.0 days"
+        assertThat(response).contains("5 day");
+        assertThat(response).doesNotContain("5.0 day");
+    }
+
+    // ── isUserUnderManager — null inputs return false ─────────────────────────
+
+    @Test
+    void chat_managerRole_nullTargetUsername_doesNotDeny() {
+        // When message doesn't resolve to any user, manager access check is skipped
+        when(userProfileRepository.findByUserNameIgnoreCase(anyString())).thenReturn(Optional.empty());
+
+        // Message with no extractable username — resolves to currentUsername (manager1)
+        String response = chatbotService.chat(
+            "How many pending leaves do I have?", "manager1", "MANAGER", null, null, false);
+
+        assertThat(response).isNotNull();
+        assertThat(response).doesNotContainIgnoringCase("only view data for employees");
+    }
+
+    // ── answerOnLeaveTodayQuestion — row with only username (length 1) ────────
+
+    @Test
+    void chat_onLeaveTodayIntent_rowWithOnlyUsername_usesUsernameAsName() {
+        // Row with only 1 element — fullName is blank, status uses default
+        when(leaveRepository.findPeopleOnLeaveByDate(any()))
+            .thenReturn(rowList(new Object[]{"john"}));
+
+        String response = chatbotService.chat("Who is on leave today?", "admin");
+
+        assertThat(response).containsIgnoringCase("john");
+    }
+
+    // ── answerOnLeaveTodayQuestion — row with username + fullName (length 2) ──
+
+    @Test
+    void chat_onLeaveTodayIntent_rowWithTwoElements_usesFullName() {
+        // Row with 2 elements — status uses default PENDING
+        when(leaveRepository.findPeopleOnLeaveByDate(any()))
+            .thenReturn(rowList(new Object[]{"john", "John Doe"}));
+
+        String response = chatbotService.chat("Who is on leave today?", "admin");
+
+        assertThat(response).containsIgnoringCase("John Doe");
+    }
+
+    // ── private method coverage via reflection ────────────────────────────────
+
+    // formatOnLeaveTodayRow — full row, no fullName, null row
+    @Test
+    void formatOnLeaveTodayRow_fullRow_includesFullNameAndStatus() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("formatOnLeaveTodayRow", Object[].class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService,
+            (Object) new Object[]{"john", "John Doe", "APPROVED"});
+
+        assertThat(result).contains("John Doe");
+        assertThat(result).contains("john");
+        assertThat(result).contains("APPROVED");
+    }
+
+    @Test
+    void formatOnLeaveTodayRow_noFullName_usesUsername() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("formatOnLeaveTodayRow", Object[].class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService,
+            (Object) new Object[]{"john", "", "APPROVED"});
+
+        assertThat(result).contains("john");
+        assertThat(result).doesNotContain("(`");
+    }
+
+    @Test
+    void formatOnLeaveTodayRow_nullRow_usesDefaults() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("formatOnLeaveTodayRow", Object[].class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService, (Object) null);
+
+        assertThat(result).containsIgnoringCase("unknown");
+        assertThat(result).containsIgnoringCase("PENDING");
+    }
+
+    // bindSearchTerms — blank/null skips, non-blank sets params
+    @Test
+    void bindSearchTerms_nullQuery_doesNotSetParams() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("bindSearchTerms", java.sql.PreparedStatement.class, String.class);
+        m.setAccessible(true);
+
+        java.sql.PreparedStatement stmt = mock(java.sql.PreparedStatement.class);
+        m.invoke(chatbotService, stmt, null);
+
+        verifyNoInteractions(stmt);
+    }
+
+    @Test
+    void bindSearchTerms_blankQuery_doesNotSetParams() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("bindSearchTerms", java.sql.PreparedStatement.class, String.class);
+        m.setAccessible(true);
+
+        java.sql.PreparedStatement stmt = mock(java.sql.PreparedStatement.class);
+        m.invoke(chatbotService, stmt, "   ");
+
+        verifyNoInteractions(stmt);
+    }
+
+    @Test
+    void bindSearchTerms_validQuery_setsParams() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("bindSearchTerms", java.sql.PreparedStatement.class, String.class);
+        m.setAccessible(true);
+
+        java.sql.PreparedStatement stmt = mock(java.sql.PreparedStatement.class);
+        m.invoke(chatbotService, stmt, "annual leave");
+
+        verify(stmt).setString(1, "annual leave");
+        verify(stmt).setString(2, "annual leave");
+    }
+
+    // isAdmin — true/false
+    @Test
+    void isAdmin_adminRole_returnsTrue() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("isAdmin", String.class);
+        m.setAccessible(true);
+
+        assertThat((boolean) m.invoke(chatbotService, "ADMIN")).isTrue();
+        assertThat((boolean) m.invoke(chatbotService, "admin")).isTrue();
+        assertThat((boolean) m.invoke(chatbotService, "EMPLOYEE")).isFalse();
+        assertThat((boolean) m.invoke(chatbotService, (Object) null)).isFalse();
+    }
+
+    // quoteIdentifier — normal and with embedded quotes
+    @Test
+    void quoteIdentifier_normalName_wrapsInDoubleQuotes() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("quoteIdentifier", String.class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService, "user_profile");
+        assertThat(result).isEqualTo("\"user_profile\"");
+    }
+
+    @Test
+    void quoteIdentifier_nameWithEmbeddedQuote_escapesIt() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("quoteIdentifier", String.class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService, "col\"name");
+        assertThat(result).isEqualTo("\"col\"\"name\"");
+    }
+
+    // resolveQuestionUsername — extractUserLookupUsername branch ("who is X")
+    @Test
+    void resolveQuestionUsername_whoIsPattern_extractsUsername() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("resolveQuestionUsername", String.class, String.class);
+        m.setAccessible(true);
+
+        // "Who is john?" — CHATBOT_USERNAME_LOOKUP_PATTERN captures "john" directly
+        // No repo call needed — the pattern match returns the captured group
+        String result = (String) m.invoke(chatbotService, "Who is john?", "admin");
+
+        assertThat(result).isEqualTo("john");
+    }
+
+    @Test
+    void resolveQuestionUsername_nullMessage_returnsCurrentUsername() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("resolveQuestionUsername", String.class, String.class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService, null, "john");
+
+        assertThat(result).isEqualTo("john");
+    }
+
+    // getSearchableColumns — default/unknown table falls back to table columns
+    @Test
+    void getSearchableColumns_unknownTable_fallsBackToTableColumns() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("getSearchableColumns",
+                Class.forName("com.cresensolutions.leaveservice.service.Impl.ChatbotServiceImpl$TableInfo"));
+        m.setAccessible(true);
+
+        // Build a TableInfo via reflection
+        Class<?> tableInfoClass = Class.forName(
+            "com.cresensolutions.leaveservice.service.Impl.ChatbotServiceImpl$TableInfo");
+        java.lang.reflect.Constructor<?> ctor = tableInfoClass.getDeclaredConstructor(
+            String.class, String.class, java.util.List.class);
+        ctor.setAccessible(true);
+        Object tableInfo = ctor.newInstance("custom_schema", "custom_table",
+            java.util.List.of("col_a", "col_b", "col_c"));
+
+        @SuppressWarnings("unchecked")
+        java.util.List<String> result = (java.util.List<String>) m.invoke(chatbotService, tableInfo);
+
+        // Unknown table → falls back to table's own columns (up to max)
+        assertThat(result).isNotEmpty();
+        assertThat(result).contains("col_a");
+    }
+
+    // buildSearchableExpression — single column and multiple columns
+    @Test
+    void buildSearchableExpression_singleColumn_buildsTsVector() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("buildSearchableExpression", java.util.List.class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService, java.util.List.of("user_name"));
+
+        assertThat(result).contains("to_tsvector");
+        assertThat(result).contains("user_name");
+        assertThat(result).contains("CONCAT_WS");
+    }
+
+    @Test
+    void buildSearchableExpression_multipleColumns_includesAll() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class
+            .getDeclaredMethod("buildSearchableExpression", java.util.List.class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService, java.util.List.of("full_name", "email_id"));
+
+        assertThat(result).contains("full_name");
+        assertThat(result).contains("email_id");
+    }
+
+    // runModelCallFallback — circuit breaker fallback returns fallback message
+    @Test
+    void runModelCallFallback_returnsCircuitBreakerMessage() throws Exception {
+        java.lang.reflect.Method m = ChatbotServiceImpl.class.getDeclaredMethod(
+            "runModelCallFallback",
+            com.cresensolutions.leaveservice.chatbot.Prompt.class,
+            String.class,
+            String.class,
+            Throwable.class);
+        m.setAccessible(true);
+
+        String result = (String) m.invoke(chatbotService,
+            null, "test message", "req-1", new RuntimeException("circuit open"));
+
+        assertThat(result).containsIgnoringCase("unable to reach");
+    }
+
+    // isCancelled — true when in cancelled set, false otherwise
+    @Test
+    void isCancelled_cancelledId_returnsTrue() throws Exception {
+        java.lang.reflect.Method cancel = ChatbotServiceImpl.class
+            .getDeclaredMethod("isCancelled", String.class);
+        cancel.setAccessible(true);
+
+        // Add to cancelled set via cancelRequest
+        chatbotService.cancelRequest("req-cancelled");
+
+        assertThat((boolean) cancel.invoke(chatbotService, "req-cancelled")).isTrue();
+        assertThat((boolean) cancel.invoke(chatbotService, "req-other")).isFalse();
+        assertThat((boolean) cancel.invoke(chatbotService, (Object) null)).isFalse();
+    }
+
+    // ── helper ────────────────────────────────────────────────────────────────
+
+    private UserProfile buildUserWithRole(Long id, String username, String role) {
+        UserProfile u = new UserProfile();
+        try {
+            setField(u, "id", id);
+            setField(u, "userName", username);
+            setField(u, "role", role);
+            setField(u, "active", true);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return u;
     }
 }
